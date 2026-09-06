@@ -216,6 +216,18 @@ $songlistPlayCount = ([regex]::Matches($text, [regex]::Escape($songlistPlayFrom)
 if ($songlistPlayCount -ne 1) { throw "expected one songlist row play handler, got $songlistPlayCount" }
 $text = $text.Replace($songlistPlayFrom, $songlistPlayTo)
 
+# Immediate performance-view switch: the settings page only notifies the native
+# layer (togglePerformanceView) and the new FOCUS/INTERACTIVE variant is applied
+# on the next play command. Re-issue play for the current song right after the
+# preference changes, then seek back to the captured position (native resolves
+# the variant file per its now-updated preference; variant videos of one job are
+# frame-identical in duration, so timestamps map 1:1).
+$viewSwitchFrom = '"performanceView"in d&&Z.togglePerformanceView({new_status:String(d.performanceView)})'
+$viewSwitchTo = '"performanceView"in d&&(Z.togglePerformanceView({new_status:String(d.performanceView)}),(()=>{try{const __t=Rt(),__v=Number(__t.songProgress)||0;if(!__t.isPlaying)return;const __c=__t.playSource==="songlist"?__t.nowPlaying:__t.currentSong;if(!__c)return;const __s=__t.playSource==="songlist"?(()=>{const __o={...__c};delete __o.duration;return __o})():{id:__c.itemId||__c.id,name:__c.name,videoUrl:__c.videoUrl??"",videoByTodView:__c.videoByTodView,nameKey:__c.nameKey??"",coverUrl:__c.coverUrl??__c.iconUrl??"",source:"playlist",performanceType:__c.performanceType??""};setTimeout(()=>{try{Ct({cmd:"play",song:__s})}catch(__e){}},60);if(__v>1){[500,1300,2600].forEach(__ms=>setTimeout(()=>{try{Ct({cmd:"timeupdate",position:__v})}catch(__e){}},__ms))}}catch(__e){}})())'
+$viewSwitchCount = ([regex]::Matches($text, [regex]::Escape($viewSwitchFrom))).Count
+if ($viewSwitchCount -ne 1) { throw "expected one performanceView toggle call, got $viewSwitchCount" }
+$text = $text.Replace($viewSwitchFrom, $viewSwitchTo)
+
 $offlineUidFallbackFrom = 'const M=s.uid||b1;s.setUid(M)'
 $offlineUidFallbackTo = 'const M=!s.uid||String(s.uid)==="0"?"0":String(s.uid);s.setUid(M==="0"?"":M)'
 $offlineUidFallbackCount = ([regex]::Matches($text, [regex]::Escape($offlineUidFallbackFrom))).Count
