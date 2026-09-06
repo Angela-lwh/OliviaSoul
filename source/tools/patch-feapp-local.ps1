@@ -196,6 +196,15 @@ $collectionAddCount = ([regex]::Matches($text, [regex]::Escape($collectionAddFro
 if ($collectionAddCount -ne 1) { throw "expected one Collection add-playlist call, got $collectionAddCount" }
 $text = $text.Replace($collectionAddFrom, $collectionAddTo)
 
+# isSongAvailable fallback: offline playlist items have no native download entry, so
+# auto-next aborted in playSong() before reaching the player. Items that carry a
+# videoUrl (always present in searchPlaylist payloads) are playable directly.
+$isSongAvailableFrom = 'a=B=>{var W;if(t.value!==Se.LITE)return!0;const K=l(B);return K?((W=i.getDownloadEntry(K))==null?void 0:W.state)==="completed":!0}'
+$isSongAvailableTo = 'a=B=>{var W;if(t.value!==Se.LITE)return!0;const K=l(B);return K?((W=i.getDownloadEntry(K))==null?void 0:W.state)==="completed"||typeof B.videoUrl=="string"&&B.videoUrl.length>0:!0}'
+$isSongAvailableCount = ([regex]::Matches($text, [regex]::Escape($isSongAvailableFrom))).Count
+if ($isSongAvailableCount -ne 1) { throw "expected one isSongAvailable download gate, got $isSongAvailableCount" }
+$text = $text.Replace($isSongAvailableFrom, $isSongAvailableTo)
+
 $offlineUidFallbackFrom = 'const M=s.uid||b1;s.setUid(M)'
 $offlineUidFallbackTo = 'const M=!s.uid||String(s.uid)==="0"?"0":String(s.uid);s.setUid(M==="0"?"":M)'
 $offlineUidFallbackCount = ([regex]::Matches($text, [regex]::Escape($offlineUidFallbackFrom))).Count
