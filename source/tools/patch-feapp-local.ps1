@@ -205,15 +205,6 @@ $isSongAvailableCount = ([regex]::Matches($text, [regex]::Escape($isSongAvailabl
 if ($isSongAvailableCount -ne 1) { throw "expected one isSongAvailable download gate, got $isSongAvailableCount" }
 $text = $text.Replace($isSongAvailableFrom, $isSongAvailableTo)
 
-# Diagnostic probe: report player state to the local service log when a song ends,
-# so auto-next failures can be diagnosed from runtime.log. Harmless otherwise: the
-# request lands on searchPlaylist which is already implemented server-side.
-$endedProbeFrom = 'case"ended":if(m.value=!1,w("natural_end"),h.value==="songlist")'
-$endedProbeTo = 'case"ended":if(m.value=!1,w("natural_end"),fetch("' + $ServiceUrl.TrimEnd("/") + '/toy/searchPlaylist?debug="+encodeURIComponent("h="+h.value+";len="+x.value.length+";mode="+p.value+";u="+(u.value&&u.value.itemId||"null")+";f="+(f.value&&f.value.id||"null")+";idx="+(u.value?x.value.findIndex(ue=>ue.itemId===u.value.itemId):-1))).catch(()=>{}),h.value==="songlist")'
-$endedProbeCount = ([regex]::Matches($text, [regex]::Escape($endedProbeFrom))).Count
-if ($endedProbeCount -ne 1) { throw "expected one ended-case anchor, got $endedProbeCount" }
-$text = $text.Replace($endedProbeFrom, $endedProbeTo)
-
 # Auto-next part 2: the songlist page played single items via playSonglistItem(),
 # which never populates the playlist queue, so the ended handler found an empty
 # queue (probe: h=songlist;len=0;idx=-1) and stopped. Seed the queue with the
