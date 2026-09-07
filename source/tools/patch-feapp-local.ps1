@@ -235,6 +235,15 @@ $viewSwitchCount = ([regex]::Matches($text, [regex]::Escape($viewSwitchFrom))).C
 if ($viewSwitchCount -ne 1) { throw "expected one performanceView toggle call, got $viewSwitchCount" }
 $text = $text.Replace($viewSwitchFrom, $viewSwitchTo)
 
+# 原生离线曲库封面兜底：曲库(offlineCatalog)歌曲的 iconUrl 多为已关停官方 CDN 的
+# 死链/空值。在归一化点(.map(a=>Qo(a)))统一改写为本地 /cover/<nameKey>.jpg；
+# 本地服务 /cover 会按 nameKey 自动匹配真实扩展名(jpg/png/webp)。
+$libraryCoverFrom = '.map(a=>Qo(a))'
+$libraryCoverTo = '.map(a=>{const r=Qo(a);try{const k=String(r.nameKey||r.id||"");if(!r.iconUrl||/olivia\.miyoushe\.com/.test(String(r.iconUrl))){const u="http://127.0.0.1:27149/cover/"+encodeURIComponent(k)+".jpg";r.iconUrl=u;r.coverUrl=u}}catch(e){}return r})'
+$libraryCoverCount = ([regex]::Matches($text, [regex]::Escape($libraryCoverFrom))).Count
+if ($libraryCoverCount -ne 1) { throw "expected one offline catalog song normalizer, got $libraryCoverCount" }
+$text = $text.Replace($libraryCoverFrom, $libraryCoverTo)
+
 $offlineUidFallbackFrom = 'const M=s.uid||b1;s.setUid(M)'
 $offlineUidFallbackTo = 'const M=!s.uid||String(s.uid)==="0"?"0":String(s.uid);s.setUid(M==="0"?"":M)'
 $offlineUidFallbackCount = ([regex]::Matches($text, [regex]::Escape($offlineUidFallbackFrom))).Count
