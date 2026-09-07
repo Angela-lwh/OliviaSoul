@@ -222,8 +222,15 @@ $text = $text.Replace($songlistPlayFrom, $songlistPlayTo)
 # preference changes, then seek back to the captured position (native resolves
 # the variant file per its now-updated preference; variant videos of one job are
 # frame-identical in duration, so timestamps map 1:1).
+#
+# 切视角延迟/重复的两个可调参数：
+#  - play 前置延迟 60ms -> 16ms：切换指令几乎立即下发（若偶发切不过去，可改回 60）。
+#  - __os = 1（秒）：需补偿的量 = songProgress 进度滞后（实测约 0.8s）+ 从点击到原生
+#    真正切换期间旧画面继续播放的 ~0.2s。若切后仍有重复画面 -> 调大 __os；
+#    若新视角从点击位置之后开始（跳过了内容）-> 调小 __os（最小可设 0）。
+#  - 进度恢复轮询 120ms -> 60ms、上限 40 次（约 2.4s）：seek 更快到达，仍只补发一次。
 $viewSwitchFrom = '"performanceView"in d&&Z.togglePerformanceView({new_status:String(d.performanceView)})'
-$viewSwitchTo = '"performanceView"in d&&(Z.togglePerformanceView({new_status:String(d.performanceView)}),(()=>{try{const __t=Rt(),__v=Number(__t.songProgress)||0;if(!__t.isPlaying)return;const __c=__t.playSource==="songlist"?__t.nowPlaying:__t.currentSong;if(!__c)return;const __s=__t.playSource==="songlist"?(()=>{const __o={...__c};delete __o.duration;return __o})():{id:__c.itemId||__c.id,name:__c.name,videoUrl:__c.videoUrl??"",videoByTodView:__c.videoByTodView,nameKey:__c.nameKey??"",coverUrl:__c.coverUrl??__c.iconUrl??"",source:"playlist",performanceType:__c.performanceType??""};setTimeout(()=>{try{Ct({cmd:"play",song:__s})}catch(__e){}},60);if(__v>1){let __n=0,__r=0;const __iv=setInterval(()=>{__n++;const __p=Number(__t.songProgress)||0;if(__n>=2&&__p<1)__r=1;if(__r||__n>25){clearInterval(__iv);try{Ct({cmd:"timeupdate",position:__v})}catch(__e){}}},120)}}catch(__e){}})())'
+$viewSwitchTo = '"performanceView"in d&&(Z.togglePerformanceView({new_status:String(d.performanceView)}),(()=>{try{const __t=Rt(),__v=Number(__t.songProgress)||0;if(!__t.isPlaying)return;const __c=__t.playSource==="songlist"?__t.nowPlaying:__t.currentSong;if(!__c)return;const __s=__t.playSource==="songlist"?(()=>{const __o={...__c};delete __o.duration;return __o})():{id:__c.itemId||__c.id,name:__c.name,videoUrl:__c.videoUrl??"",videoByTodView:__c.videoByTodView,nameKey:__c.nameKey??"",coverUrl:__c.coverUrl??__c.iconUrl??"",source:"playlist",performanceType:__c.performanceType??""};setTimeout(()=>{try{Ct({cmd:"play",song:__s})}catch(__e){}},16);if(__v>1){const __os=1;let __n=0,__r=0;const __iv=setInterval(()=>{__n++;const __p=Number(__t.songProgress)||0;if(__n>=2&&__p<1)__r=1;if(__r||__n>40){clearInterval(__iv);try{Ct({cmd:"timeupdate",position:__v+__os})}catch(__e){}}},60)}}catch(__e){}})())'
 $viewSwitchCount = ([regex]::Matches($text, [regex]::Escape($viewSwitchFrom))).Count
 if ($viewSwitchCount -ne 1) { throw "expected one performanceView toggle call, got $viewSwitchCount" }
 $text = $text.Replace($viewSwitchFrom, $viewSwitchTo)
