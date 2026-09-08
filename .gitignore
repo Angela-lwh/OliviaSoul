@@ -19,3 +19,11 @@
 Thumbs.db
 release/*.exe
 release/*.zip
+# 本地长期记忆（agent 用，不进公开仓库）
+MEMORY.md
+push-github-via-mihomo.md
+oliviasoul-local-runbook.md
+oliviasoul-share-protocol.md
+oliviasoul-vps.md
+oliviasoul-release-packaging.md
+user-preferences.md
