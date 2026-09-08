@@ -356,13 +356,20 @@
       if (again) again.onclick = function () { renderSongList(h); };
     }
 
+    // 复制分享码：同步 fallback 先落地（CEF 里 clipboard 异步接口可能不回调），保证提示一定会弹
     function copyShare(code, btn) {
-      function done() { showToast("复制分享码成功", "success"); }
+      var shown = false;
+      function done() {
+        if (shown) return;
+        shown = true;
+        showToast("分享码已复制：" + code, "success");
+      }
+      try { fallbackCopy(code); done(); } catch (e) {}
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(code).then(done, function () { fallbackCopy(code); done(); });
-        } else { fallbackCopy(code); done(); }
-      } catch (e) { fallbackCopy(code); done(); }
+          navigator.clipboard.writeText(code).then(done, function () {});
+        }
+      } catch (e) {}
     }
     // 游戏风格 toast（顶部居中，深色卡片，自动消失）
     var _toastHost = null;
@@ -396,6 +403,56 @@
         document.body.appendChild(t); t.select();
         try { document.execCommand("copy"); } catch (e) {}
         document.body.removeChild(t);
+      } catch (e) {}
+    }
+
+    // ---------- ElementUI 风格结果弹窗（获取成功等） ----------
+    var _dlgHost = null;
+    function closeResultDialog() {
+      if (_dlgHost && _dlgHost.parentNode) _dlgHost.parentNode.removeChild(_dlgHost);
+      _dlgHost = null;
+    }
+    function showResultDialog(opts) {
+      opts = opts || {};
+      closeResultDialog();
+      var icon = opts.type === "error"
+        ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e09a9a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>'
+        : '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"></circle><path d="m8 12 3 3 5-6"></path></svg>';
+      var host = document.createElement("div");
+      host.id = "os-upload-dialog";
+      host.style.cssText = "position:fixed;inset:0;z-index:2147483002;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);font-family:'Segoe UI','Microsoft YaHei UI',sans-serif;";
+      host.innerHTML =
+        '<div style="width:min(420px,90vw);background:#1c1d22;border:1px solid #30313a;border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.6);color:#e6e3de;overflow:hidden;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 22px 8px;">' +
+            '<div style="font-size:16px;font-weight:600;line-height:22px;">' + esc(opts.title || "提示") + '</div>' +
+            '<button data-os-dlg-close style="background:none;border:0;color:#8a8a93;font-size:20px;line-height:1;cursor:pointer;flex-shrink:0;">×</button>' +
+          '</div>' +
+          '<div style="display:flex;align-items:flex-start;gap:12px;padding:4px 22px 18px;font-size:14px;line-height:22px;color:#c9c4bc;">' +
+            icon + '<div style="flex:1;min-width:0;">' + esc(opts.message || "") + '</div>' +
+          '</div>' +
+          '<div style="display:flex;justify-content:flex-end;padding:12px 22px 16px;border-top:1px solid #2a2b32;">' +
+            '<button data-os-dlg-ok style="padding:9px 22px;border:0;border-radius:8px;background:#d8cfc4;color:#232227;font-size:14px;font-weight:600;cursor:pointer;">' + esc(opts.okText || "确定") + '</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(host);
+      _dlgHost = host;
+      function done() {
+        closeResultDialog();
+        if (typeof opts.onClose === "function") { try { opts.onClose(); } catch (e) {} }
+      }
+      var okBtn = host.querySelector("[data-os-dlg-ok]");
+      var closeBtn = host.querySelector("[data-os-dlg-close]");
+      if (okBtn) okBtn.onclick = done;
+      if (closeBtn) closeBtn.onclick = done;
+    }
+
+    // 还原完成后让曲库列表重新拉取：hash 路由先跳走再跳回，触发视图重新挂载
+    function refreshSongList() {
+      try {
+        var cur = location.hash || "";
+        if (cur.indexOf("#/studio") !== 0) return; // 不在曲库页不用刷，进去时本来就会重新拉取
+        location.hash = "#/history";
+        setTimeout(function () { location.hash = cur; }, 200);
       } catch (e) {}
     }
 
@@ -448,12 +505,7 @@
           });
         }).join("");
         if (!existingNode) host.insertBefore(node, host.firstChild);
-        // 悬停「复制」圆钮 -> 复制分享码
-        var copies = node.querySelectorAll("[data-os-action]");
-        for (var k = 0; k < copies.length; k++) copies[k].onclick = function (ev) {
-          ev.stopPropagation();
-          copyShare(this.getAttribute("data-os-copy-code"), this);
-        };
+        // 「复制」按钮的点击由文档级捕获统一处理（避免列表重渲染把 onclick 冲掉）
       }).catch(function () {});
     }
 
@@ -539,7 +591,19 @@
               var job = pj.data;
               if (bar) bar.style.width = (job.progress || 0) + "%";
               setGetStatus(h, (job.status === "done" ? "获取完成：已还原到曲库" : job.status === "failed" ? "获取失败：" + (job.error || "") : "正在从云端获取…（" + (job.progress || 0) + "%）"), job.status === "failed" ? "#e09a9a" : "#9a9aa2");
-              if (job.status === "done") { if (bar) bar.style.width = "100%"; setGetStatus(h, "获取成功，已还原到曲库：\u300a" + prettyName(job.result ? job.result.songKey : code) + "\u300b", "#7fa08b"); refreshQuota(true); break; }
+              if (job.status === "done") {
+                if (bar) bar.style.width = "100%";
+                var gotName = (job.result && job.result.name) || prettyName(job.result ? job.result.songKey : code);
+                closeModal();
+                showResultDialog({
+                  title: "获取成功",
+                  message: "《" + gotName + "》已还原到本机曲库，曲库列表已刷新。",
+                  okText: "确定",
+                });
+                refreshSongList();
+                refreshQuota(true);
+                break;
+              }
               if (job.status === "failed") { if (bar) bar.style.width = "0%"; setGetStatus(h, "获取失败：" + job.error, "#e09a9a"); break; }
             }
           } catch (e) {}
@@ -607,8 +671,16 @@
     style.textContent = ACG_SCROLL_CSS;
     (document.head || document.documentElement).appendChild(style);
 
-    // 文档级捕获：先于 Vue 的元素级处理器拦截（仅拦曲库上传入口）
+    // 文档级捕获：先于 Vue 的元素级处理器拦截（曲库上传入口 / 我的上传「复制」）
     document.addEventListener("click", function (e) {
+      var copyBtn = e.target && e.target.closest ? e.target.closest("[data-os-copy-code]") : null;
+      if (copyBtn) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        copyShare(copyBtn.getAttribute("data-os-copy-code"), copyBtn);
+        return;
+      }
       if (!isUploadButton(e.target)) return;
       e.preventDefault();
       e.stopImmediatePropagation();

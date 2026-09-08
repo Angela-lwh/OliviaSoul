@@ -137,12 +137,17 @@ function httpPutOss(u, filePath, start, length, onBytes) {
   });
 }
 
-export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption, readSongMeta: readSongMetaOption, writeSongMeta: writeSongMetaOption }) {
+export function createShareEngine({
+  appData, dataDir, videoRoot: videoRootOption, readSongMeta: readSongMetaOption, writeSongMeta: writeSongMetaOption,
+  serviceBase: serviceBaseOption, findCover: findCoverOption,
+}) {
   const cfgFile = path.join(appData, "share.json");
   const recordsFile = path.join(appData, "share-records.json");
   const VIDEO_ROOT = videoRootOption ?? WIN_VIDEO_ROOT;
   const readSongMeta = readSongMetaOption ?? null;
   const writeSongMeta = writeSongMetaOption ?? null;
+  const serviceBase = typeof serviceBaseOption === "function" ? serviceBaseOption : () => "http://127.0.0.1:27149";
+  const findCover = typeof findCoverOption === "function" ? findCoverOption : null;
 
   async function loadRecords() {
     try { return JSON.parse(await fs.readFile(recordsFile, "utf8")); }
@@ -238,8 +243,16 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
     for (const n of videoNames) files.push({ name: n, size: (await fs.stat(path.join(folder, n))).size, done: false });
 
     const id = randomUUID();
+    // 曲名/时长随上传一起送到服务端，下载方还原时就能用上正确的元数据（本地没有这行时尤其重要）
+    let songName = prettyNameKey(songKey);
+    let duration = 0;
+    try {
+      const meta = (await readSongMeta?.()) ?? {};
+      songName = meta[songKey]?.name || songName;
+      duration = Number(meta[songKey]?.duration) || 0;
+    } catch {}
     const job = {
-      id, status: "uploading", songKey, files, error: null, code: null,
+      id, status: "uploading", songKey, songName, duration, files, error: null, code: null,
       progress: 0, bytesDone: 0, bytesTotal: files.reduce((s, f) => s + f.size, 0),
     };
     jobs.set(id, job);
@@ -254,7 +267,8 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
   async function runUpload(job, cfg, folder) {
     const H = headers(cfg);
     const begin = (await httpJson("POST", `${cfg.server}/api/upload/begin`, H, {
-      songKey: job.songKey, files: job.files.map(f => ({ name: f.name, size: f.size })),
+      songKey: job.songKey, songName: job.songName ?? "", duration: Number(job.duration) || 0,
+      files: job.files.map(f => ({ name: f.name, size: f.size })),
     })).data;
     // OSS 模式：begin 返回 sessionId + 每个文件的分片预签名 URL，客户端直传 OSS
     job.sessionId = begin.sessionId;
@@ -383,15 +397,23 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
     // 并发下载（4 个同时），互不阻塞
     await Promise.all(beg.files.map(f => downloadOne(f)));
 
-    // 注册到游戏曲库（让 ACG 列表能认出这首）
-    let dlMeta = {};
+    // 注册到游戏曲库（让 ACG 列表能认出这首）；元数据优先本机已有，其次用上传方随分享码带过来的
+    let known = {};
+    try { known = (await readSongMeta?.()) ?? {}; } catch {}
+    const dlMeta = known[beg.songKey] || {};
+    const name = dlMeta.name || beg.songName || prettyNameKey(beg.songKey);
+    const duration = Number(dlMeta.duration) || Number(beg.duration) || 0;
+    let iconUrl = dlMeta.iconUrl || "";
+    if (!iconUrl && findCover) {
+      try {
+        const file = await findCover(beg.songKey);
+        if (file) iconUrl = `${serviceBase()}/cover/${file}`;
+      } catch {}
+    }
     try {
-      let known = {};
-      try { known = (await readSongMeta?.()) ?? {}; } catch {}
-      dlMeta = known[beg.songKey] || {};
-      await writeSongMeta?.({ nameKey: beg.songKey, name: dlMeta.name || prettyNameKey(beg.songKey), duration: Number(dlMeta.duration) || 0, iconUrl: dlMeta.iconUrl || "", performanceType: dlMeta.performanceType || "PlaySing", videoUrl: "" });
-    } catch {}
-    return { code, songKey: beg.songKey, name: dlMeta.name || prettyNameKey(beg.songKey), totalBytes: beg.totalBytes, outDir, fileCount: beg.files.length };
+      await writeSongMeta?.({ nameKey: beg.songKey, name, duration, iconUrl, performanceType: dlMeta.performanceType || "PlaySing", videoUrl: "" });
+    } catch (e) { console.error("[writeSongMeta]", e?.message ?? e); }
+    return { code, songKey: beg.songKey, name, totalBytes: beg.totalBytes, outDir, fileCount: beg.files.length };
   }
 
   // 下载任务（后台执行 + 进度轮询）

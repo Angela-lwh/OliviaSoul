@@ -539,7 +539,9 @@ export async function createOliviaService(options = {}) {
       }
     } catch (e) { console.error("[writeSongMeta] " + e.message); }
   };
-  const shareEngine = createShareEngine({ appData, dataDir, readSongMeta, writeSongMeta });
+  // 分享还原时要给游戏写绝对 URL（封面等），端口在 listen 时才确定
+  let serviceBase = "http://127.0.0.1:27149";
+  const shareEngine = createShareEngine({ appData, dataDir, readSongMeta, writeSongMeta, serviceBase: () => serviceBase });
   db.prepare("UPDATE letters SET status = ?, error = ? WHERE status = ?")
     .run(STATUS.FAILED, "回信生成报错", STATUS.LLM_PROCESSING);
   const failedLetters = db.prepare("SELECT id, reply_video FROM letters WHERE status = ?").all(STATUS.FAILED);
@@ -2505,6 +2507,8 @@ export async function createOliviaService(options = {}) {
         server.once("error", reject);
         server.listen(port, host, resolvePromise);
       });
+      const bound = server.address();
+      serviceBase = `http://127.0.0.1:${bound && typeof bound === "object" ? bound.port : port}`;
       return server.address();
     },
     async close() {
