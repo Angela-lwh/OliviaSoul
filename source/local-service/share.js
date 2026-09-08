@@ -418,6 +418,11 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
     return r;
   }
 
+  // 服务端配额（今天还可上传几首；下载不限次数）
+  async function quota(cfg) {
+    return (await httpJson("GET", `${cfg.server}/api/quota`, headers(cfg), null)).data;
+  }
+
   // ---------- 路由 ----------
   async function route(req, res, pathname) {
     if (req.method === "OPTIONS") { res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, x-app-secret, x-device, x-user, x-sha256, x-offset, x-dtoken, Range" }); res.end(); return true; }
@@ -530,6 +535,15 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
       return ok(res, j);
     }
 
+    if (pathname === "/share/quota") {
+      if (req.method === "GET") {
+        const c = await loadCfg();
+        if (!c.server) return json(res, 400, { code: 1, message: "未配置服务器", data: null });
+        try { return ok(res, await quota(c)); }
+        catch (e) { return json(res, 502, { code: 1, message: `配额查询失败：${e.message}`, data: null }); }
+      }
+    }
+
     if (pathname === "/share/info") {
       if (req.method === "GET") {
         const c = await loadCfg();
@@ -542,5 +556,5 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
     return false;
   }
 
-  return { route, loadCfg, saveCfg, listSongs, startUpload, getJob, cancelJob, downloadToCache, info, loadRecords, saveRecords };
+  return { route, loadCfg, saveCfg, listSongs, startUpload, getJob, cancelJob, downloadToCache, info, quota, loadRecords, saveRecords };
 }

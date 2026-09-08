@@ -69,6 +69,34 @@
       for (var i = 0; i < stack.length; i++) rewriteNode(stack[i]);
     }
 
+    // ---------- 「今天还可上传 N 首」按服务端真实配额刷新 ----------
+    var quotaCache = null;
+    function applyQuotaText() {
+      if (!quotaCache) return;
+      var remain = Number(quotaCache.upRemaining);
+      if (!isFinite(remain)) return;
+      var want = remain > 0 ? ("今天还可上传 " + remain + " 首") : "今日上传已用完";
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var n;
+      while ((n = walker.nextNode())) {
+        var t = n.nodeValue || "";
+        var next = t;
+        if (t.indexOf("今天还可上传") !== -1) next = t.replace(/今天还可上传\s*\d+\s*首/u, want);
+        if (remain > 0 && next.indexOf("今日上传已用完") !== -1) next = next.replace(/今日上传已用完/u, want);
+        if (next !== t) n.nodeValue = next;
+      }
+    }
+    // force=true 时强制重新拉取；否则 5 秒内复用缓存
+    function refreshQuota(force) {
+      var now = Date.now();
+      if (!force && quotaCache && now - quotaCache.at < 5000) { applyQuotaText(); return; }
+      fetch(SERVICE + "/share/quota", { method: "GET" }).then(function (r) { return r.json(); }).then(function (env) {
+        if (env.code !== 0 || !env.data) return;
+        quotaCache = { at: Date.now(), upLimit: env.data.upLimit, upRemaining: env.data.upRemaining, upUsed: env.data.upUsed, dlUnlimited: env.data.dlUnlimited };
+        applyQuotaText();
+      }).catch(function () {});
+    }
+
     // 隐藏游戏原生的「MIDI 定制任务」面板（生成任务/后台运行/进行中），我们已用上传弹窗替代入口
     function hideLegacyMidiPanel() {
       var dialogs = document.querySelectorAll(".midi-job-list-dialog, [class*='midi-job-list']");
@@ -301,6 +329,7 @@
         if (job.status === "done") {
           if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
           showCode(h, job);
+          refreshQuota(true);   // 上传成功后刷新「今天还可上传 N 首」
         } else if (job.status === "failed" || job.status === "cancelled") {
           if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
         }
@@ -510,7 +539,7 @@
               var job = pj.data;
               if (bar) bar.style.width = (job.progress || 0) + "%";
               setGetStatus(h, (job.status === "done" ? "获取完成：已还原到曲库" : job.status === "failed" ? "获取失败：" + (job.error || "") : "正在从云端获取…（" + (job.progress || 0) + "%）"), job.status === "failed" ? "#e09a9a" : "#9a9aa2");
-              if (job.status === "done") { if (bar) bar.style.width = "100%"; setGetStatus(h, "获取成功，已还原到曲库：\u300a" + prettyName(job.result ? job.result.songKey : code) + "\u300b", "#7fa08b"); break; }
+              if (job.status === "done") { if (bar) bar.style.width = "100%"; setGetStatus(h, "获取成功，已还原到曲库：\u300a" + prettyName(job.result ? job.result.songKey : code) + "\u300b", "#7fa08b"); refreshQuota(true); break; }
               if (job.status === "failed") { if (bar) bar.style.width = "0%"; setGetStatus(h, "获取失败：" + job.error, "#e09a9a"); break; }
             }
           } catch (e) {}
@@ -553,6 +582,7 @@
     var mo = null;
     function boot() {
       rewriteText(document.body);
+      refreshQuota(true);
       renderMyUploads();
       hideLegacyMidiPanel();
       injectGetButton();
@@ -567,6 +597,7 @@
         }
         try { hideLegacyMidiPanel(); } catch (e) {}
         try { injectGetButton(); } catch (e) {}
+        try { applyQuotaText(); } catch (e) {}
       });
       mo.observe(document.body, { childList: true, subtree: true, characterData: true });
     }
