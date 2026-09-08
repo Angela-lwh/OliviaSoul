@@ -156,7 +156,11 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
     let c = {};
     try { c = JSON.parse(await fs.readFile(cfgFile, "utf8")); } catch {}
     c = { ...CFG_DEFAULT, ...c };
-    if (!c.deviceCode) c.deviceCode = randomUUID();
+    // 设备码必须持久化：否则每次重启服务都会换一个新身份，服务端的设备额度形同虚设
+    if (!c.deviceCode) {
+      c.deviceCode = randomUUID();
+      await fs.writeFile(cfgFile, JSON.stringify(c, null, 2), "utf8").catch(() => {});
+    }
     c.server = String(c.server ?? "").replace(/\/+$/u, "");
     return c;
   }
