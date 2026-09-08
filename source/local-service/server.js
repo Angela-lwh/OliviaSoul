@@ -17,6 +17,7 @@ import {
   prepareSoulBundle,
 } from "./soul-bundle.js";
 import { TranscriptionEngine, TranscriptionJobs } from "./transcription.js";
+import { createShareEngine } from "./share.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(here, "..");
@@ -511,6 +512,34 @@ export async function createOliviaService(options = {}) {
   await mkdir(archiveDir, { recursive: true });
   await mkdir(rawArchiveDir, { recursive: true });
   const db = initDatabase(join(dataDir, "olivia-local.sqlite"));
+  const readSongMeta = () => {
+    try {
+      const rows = db.prepare("SELECT name, name_key, icon_url, duration, performance_type FROM playlist_items").all();
+      const map = {};
+      for (const r of rows) {
+        if (!r.name_key) continue;
+        map[r.name_key] = { name: r.name, duration: Number(r.duration) || 0, iconUrl: r.icon_url || "", performanceType: r.performance_type || "PlaySing" };
+      }
+      return map;
+    } catch { return {}; }
+  };
+  // 把下载还原的歌曲注册到游戏曲库（按 name_key upsert），让 ACG 列表能认出
+  const writeSongMeta = (meta) => {
+    try {
+      const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
+      if (!user) return;
+      const existing = db.prepare("SELECT id FROM playlist_items WHERE name_key = ?").get(meta.nameKey);
+      const cols = { name: meta.name, name_key: meta.nameKey, icon_url: meta.iconUrl, duration: Number(meta.duration) || 0, performance_type: meta.performanceType || "PlaySing" };
+      if (existing) {
+        db.prepare("UPDATE playlist_items SET name = ?, icon_url = ?, duration = ?, performance_type = ? WHERE name_key = ?")
+          .run(cols.name, cols.icon_url, cols.duration, cols.performance_type, meta.nameKey);
+      } else {
+        db.prepare("INSERT INTO playlist_items(id, user_id, item_type, item_id, name, name_key, icon_url, song_id, performance_id, duration, video_duration, video_url, performance_type, video_by_tod_view, created_at) VALUES(?, ?, 2, ?, ?, ?, ?, ?, '', ?, 0, ?, ?, 0, ?)")
+          .run(randomUUID().slice(0, 36), user.id, meta.nameKey, meta.name, meta.nameKey, meta.iconUrl, meta.nameKey, cols.duration, meta.videoUrl || "", cols.performance_type, nowSeconds());
+      }
+    } catch (e) { console.error("[writeSongMeta] " + e.message); }
+  };
+  const shareEngine = createShareEngine({ appData, dataDir, readSongMeta, writeSongMeta });
   db.prepare("UPDATE letters SET status = ?, error = ? WHERE status = ?")
     .run(STATUS.FAILED, "回信生成报错", STATUS.LLM_PROCESSING);
   const failedLetters = db.prepare("SELECT id, reply_video FROM letters WHERE status = ?").all(STATUS.FAILED);
@@ -1739,9 +1768,16 @@ export async function createOliviaService(options = {}) {
       console.log(`[letter-request] ${req.method} ${req.url}`);
     if (path === "/toy/addToPlaylist" || path === "/toy/delFromPlaylist" || path === "/toy/searchPlaylist")
       console.log(`[playlist-request] ${req.method} ${req.url}`);
+    if (req.method === "OPTIONS" && path.startsWith("/share")) {
+      res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, x-app-secret, x-device, x-user, x-sha256, x-offset, x-dtoken, Range" });
+      return res.end();
+    }
     if (req.method === "OPTIONS") {
       res.writeHead(204, corsHeaders(req));
       return res.end();
+    }
+    if (path.startsWith("/share/") || path === "/share") {
+      if (await shareEngine.route(req, res, path)) return;
     }
     if (path.startsWith("/toy/")) lastClientAt = nowSeconds();
 

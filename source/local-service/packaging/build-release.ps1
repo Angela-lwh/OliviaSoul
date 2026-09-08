@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$OutputDirectory = "",
     [string]$DotNet = "",
     [string]$Iscc = ""
@@ -216,7 +216,7 @@ Copy-PublicFile (Join-Path $repository "林离人设.md") (Join-Path $stage "res
 foreach ($name in @("VERSION", "00-栏目.md", "01-预检.md", "01-初始化账本.md", "03-中段生成.md", "04-尾端检查.md", "05-反馈重写.md", "开信.md", "写法.md")) {
     Copy-PublicFile (Join-Path $repository "harness\$name") (Join-Path $stage "resources\workspace-template\harness\$name")
 }
-foreach ($name in @("patch-feapp-local.ps1", "restore-feapp-original.ps1", "get-feapp-status.ps1")) {
+foreach ($name in @("patch-feapp-local.ps1", "restore-feapp-original.ps1", "get-feapp-status.ps1", "feapp-upload-overlay.js")) {
     Copy-PublicFile (Join-Path $repository "tools\$name") (Join-Path $stage "resources\workspace-template\tools\$name")
 }
 

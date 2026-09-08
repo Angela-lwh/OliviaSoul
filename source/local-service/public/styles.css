@@ -385,6 +385,24 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .noticeActions { display: flex; justify-content: flex-end; gap: 9px; }
 .noticeActions button { min-width: 84px; }
 
+/* 上传分享 */
+.shareBlock { border: 1px solid #292a2f; border-radius: 9px; background: #1b1c20; padding: 15px; }
+.shareBlock + .shareBlock { margin-top: 12px; }
+.shareBlock .settingsBlockHead { margin-bottom: 12px; }
+.shareActions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.shareSongList { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.shareSong { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid #34353c; border-radius: 8px; background: #222329; color: #e6e3de; cursor: pointer; text-align: left; }
+.shareSong:hover { border-color: #9b8a74; background: #282a30; }
+.shareSongName { font-size: 13px; font-weight: 600; }
+.shareSongMeta { font-size: 11px; flex-shrink: 0; }
+.shareFileList { display: grid; gap: 6px; margin-top: 12px; }
+.shareFile { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid #2a2b31; border-radius: 6px; background: #1e1f24; font-size: 12px; color: #cfccc7; }
+.shareFileMark { width: 16px; text-align: center; color: #65796c; }
+.shareResult { display: grid; gap: 10px; }
+.shareCodeRow { display: flex; align-items: center; gap: 12px; }
+.shareCode { font-size: 26px; letter-spacing: 4px; font-family: ui-monospace, "Cascadia Mono", monospace; color: #e2bc67; font-variant-numeric: tabular-nums; }
+.shareResultBlock [id^="shareResult"] { word-break: break-all; }
+
 @media (max-width: 760px) {
   main { width: min(100% - 20px, 1280px); padding-top: 14px; }
   .workspace { grid-template-columns: 1fr; }

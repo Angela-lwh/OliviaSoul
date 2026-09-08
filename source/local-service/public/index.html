@@ -26,6 +26,7 @@
           <button class="sideTab active" type="button" data-tab="settings">基础设置</button>
           <button class="sideTab" type="button" data-tab="memory">记忆</button>
           <button class="sideTab" type="button" data-tab="transcription">视频转文字</button>
+          <button class="sideTab" type="button" data-tab="share">上传分享</button>
         </nav>
       </aside>
 
@@ -240,6 +241,94 @@
               <textarea id="organizedTranscript" readonly placeholder="完成后显示 DeepSeek 整理文字"></textarea>
             </section>
           </div>
+        </section>
+
+        <section class="panel tabPage sharePage" data-page="share" hidden>
+          <div class="panelHead">
+            <div>
+              <h2>上传分享</h2>
+              <p>把本机曲库里的整首歌曲传到云分享，生成 8 位分享码发给对方</p>
+            </div>
+          </div>
+
+          <section class="shareBlock">
+            <div class="settingsBlockHead">
+              <strong>云分享配置</strong>
+              <small>服务器地址与密钥为云服务（与游戏内上传共用）</small>
+            </div>
+            <div class="modelSettings">
+              <div>
+                <label for="shareServer">服务器地址</label>
+                <input id="shareServer" type="url" placeholder="http://114.132.42.149:8787">
+              </div>
+              <div>
+                <label for="shareSecret">应用密钥</label>
+                <input id="shareSecret" type="password" autocomplete="off" placeholder="填写应用密钥（仅补丁客户端）">
+              </div>
+              <div>
+                <label for="shareUser">上传者昵称</label>
+                <input id="shareUser" maxlength="40" placeholder="你的昵称">
+              </div>
+            </div>
+            <div class="actions">
+              <button id="saveShareCfg" type="button">保存配置</button>
+              <span id="shareCfgStatus" class="result"></span>
+            </div>
+          </section>
+
+          <section class="shareBlock">
+            <div class="settingsBlockHead">
+              <strong>选择要分享的歌曲</strong>
+              <small>整首 = 6 个视角视频（TOD1200/1730/2000 × NI/WI），约 500MB</small>
+            </div>
+            <div class="shareActions">
+              <button id="refreshShareSongs" class="secondary" type="button">刷新曲库</button>
+              <span id="shareSongsStatus" class="result"></span>
+            </div>
+            <div id="shareSongList" class="shareSongList">
+              <p class="muted">点击"刷新曲库"读取本机可分享的歌曲。</p>
+            </div>
+          </section>
+
+          <section class="shareBlock">
+            <div class="settingsBlockHead">
+              <strong>上传进行中</strong>
+            </div>
+            <div class="taskProgress" id="shareUploadProgress" data-state="idle">
+              <div><span id="shareUploadStage">等待选择歌曲</span><strong id="shareUploadPercent">0%</strong></div>
+              <span class="taskProgressTrack"><span></span></span>
+            </div>
+            <div id="shareUploadFiles" class="shareFileList"></div>
+            <div class="actions">
+              <button id="cancelShareUpload" class="secondary danger" type="button" disabled>取消上传</button>
+            </div>
+          </section>
+
+          <section class="shareBlock shareResultBlock" id="shareResultBlock" hidden>
+            <div class="settingsBlockHead">
+              <strong>分享完成</strong>
+            </div>
+            <div class="shareResult">
+              <div class="shareCodeRow">
+                <span class="muted">分享码</span>
+                <strong id="shareResultCode" class="shareCode"></strong>
+                <button id="copyShareCode" class="secondary" type="button">复制</button>
+              </div>
+              <p id="shareResultInfo" class="muted"></p>
+            </div>
+          </section>
+
+          <section class="shareBlock">
+            <div class="settingsBlockHead">
+              <strong>下载到本机曲库</strong>
+              <small>输入对方分享码，把整首还原到本机游戏缓存目录</small>
+            </div>
+            <div class="shareActions">
+              <input id="shareDownloadCode" maxlength="8" placeholder="8 位分享码" style="max-width:220px">
+              <button id="downloadShare" class="secondary" type="button">下载还原</button>
+            </div>
+            <p id="shareDownloadStatus" class="result"></p>
+          </section>
         </section>
 
         <section class="panel tabPage debugPage" data-page="debug" hidden>

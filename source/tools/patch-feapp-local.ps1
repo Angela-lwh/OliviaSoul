@@ -318,6 +318,23 @@ $text = $text.Replace($offlinePlaylistSkip, $offlinePlaylistFetch)
 
 [IO.File]::WriteAllText($mainPath, $text, $utf8)
 
+# ---- 游戏内「上传演奏」覆盖层 ----
+# 以独立资产文件 + index.html 引入的方式注入（不调用 Vue 模板，独立于游戏逻辑运行）。
+$overlaySrc = Join-Path $PSScriptRoot "feapp-upload-overlay.js"
+if (Test-Path -LiteralPath $overlaySrc) {
+    $overlayName = "feapp-upload-overlay.js"
+    $overlayDest = Join-Path $extracted "assets\$overlayName"
+    Copy-Item -LiteralPath $overlaySrc -Destination $overlayDest -Force
+
+    $feHtmlPath = Join-Path $extracted "index.html"
+    $feHtml = [IO.File]::ReadAllText($feHtmlPath, $utf8)
+    if ($feHtml.Contains("OliviaSoulPatch:upload-overlay")) { throw "feapp index.html already contains upload-overlay include" }
+    $feOverlayInclude = '<!--OliviaSoulPatch:upload-overlay--><script defer src="./assets/' + $overlayName + '"></script>'
+    $feHtml = $feHtml.Replace("</body>", $feOverlayInclude + "</body>")
+    [IO.File]::WriteAllText($feHtmlPath, $feHtml, $utf8)
+    Write-Output "[patch] injected feapp upload-overlay -> assets/$overlayName"
+}
+
 $archiveStream = [IO.File]::Open($patched, [IO.FileMode]::Create)
 $archive = New-Object -TypeName IO.Compression.ZipArchive -ArgumentList @(
     $archiveStream,
@@ -394,6 +411,12 @@ if (-not $verifyText.Contains($collectionAddTo)) { throw "patched archive missin
 if (-not $verifyText.Contains($offlinePlaylistFetch)) { throw "patched archive still skips offline playlist fetch" }
 if ($verifyText.Contains($offlinePlaylistSkip)) { throw "patched archive still has the original offline playlist fetch skip" }
 if (-not $verifyText.Contains($uploadTabFetchTo) -or $verifyText.Contains($uploadTabFetchFrom)) { throw "patched archive still fetches remote songs on the user-upload tab while offline" }
+if (Test-Path -LiteralPath $overlaySrc) {
+    $verifyHtml = Join-Path $verifyDir "index.html"
+    $verifyHtmlText = [IO.File]::ReadAllText($verifyHtml, $utf8)
+    if (-not $verifyHtmlText.Contains("OliviaSoulPatch:upload-overlay")) { throw "patched archive missing upload-overlay include" }
+    if (-not (Test-Path -LiteralPath (Join-Path $verifyDir "assets\feapp-upload-overlay.js"))) { throw "patched archive missing feapp-upload-overlay.js" }
+}
 
 $webplayerLive = Join-Path $GameRoot "$Version\resources\webplayer.dat"
 if (-not (Test-Path -LiteralPath $webplayerLive)) { throw "webplayer.dat not found" }

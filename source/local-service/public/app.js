@@ -397,6 +397,7 @@ document.querySelectorAll(".sideTab").forEach(button => {
     document.querySelectorAll(".tabPage").forEach(page => page.hidden = page.dataset.page !== button.dataset.tab);
     if (button.dataset.tab === "memory" && !memoryLoaded) await loadMemory();
     if (button.dataset.tab === "debug") await loadDebug();
+    if (button.dataset.tab === "share") await loadShare();
   }));
 });
 document.querySelectorAll(".memoryTab").forEach(button => {
@@ -829,6 +830,140 @@ $("#memoryList").addEventListener("click", safely(async event => {
     [memoryExchanges[index + 1], memoryExchanges[index]] = [memoryExchanges[index], memoryExchanges[index + 1]];
   await saveMemory();
 }));
+
+let shareJobId = null;
+let sharePollTimer = null;
+let shareSongs = [];
+
+async function loadShare() {
+  const config = await api("/share/config");
+  $("#shareServer").value = config.server || "";
+  $("#shareUser").value = config.user || "";
+  $("#shareSecret").value = "";
+  $("#shareSecret").placeholder = config.secretSet ? "已配置（留空保持不变）" : "填写应用密钥（仅补丁客户端）";
+  await refreshShareSongs();
+}
+
+async function refreshShareSongs() {
+  $("#shareSongsStatus").textContent = "读取中…";
+  const { root, songs } = await api("/share/songs");
+  shareSongs = songs;
+  const list = $("#shareSongList");
+  if (!songs.length) {
+    list.innerHTML = `<p class="muted">未在本机曲库找到可分享歌曲。<br>目录：${root.replace(/</g, "&lt;")}</p>`;
+    $("#shareSongsStatus").textContent = `${songs.length} 首`;
+    return;
+  }
+  list.innerHTML = songs.map(s => {
+    const mb = (s.totalBytes / 1048576).toFixed(0);
+    return `<button class="shareSong" type="button" data-song="${s.nameKey}">
+      <span class="shareSongName">${s.nameKey.replace(/^PlaySing_/u, "").replace(/_Ziyun_original$/u, "")}</span>
+      <span class="shareSongMeta muted">${s.fileCount} 个视频 · ${mb} MB</span>
+    </button>`;
+  }).join("");
+  $("#shareSongsStatus").textContent = `共 ${songs.length} 首`;
+  list.querySelectorAll(".shareSong").forEach(btn => {
+    btn.addEventListener("click", safely(async () => {
+      if (shareJobId && $("#shareUploadProgress").dataset.state === "uploading") {
+        await openNotice({ title: "请稍候", message: "已有上传进行中，请先等待完成或取消。" });
+        return;
+      }
+      const song = btn.dataset.song;
+      await startShareUpload(song);
+    }));
+  });
+}
+
+async function startShareUpload(songKey) {
+  await saveShareCfg(true);
+  const job = await api("/share/upload", { method: "POST", body: JSON.stringify({ songKey }) });
+  shareJobId = job.id;
+  $("#shareUploadProgress").dataset.state = "uploading";
+  $("#shareUploadStage").textContent = "开始上传…";
+  $("#shareUploadPercent").textContent = "0%";
+  $("#shareUploadProgress").querySelector(".taskProgressTrack span").style.width = "0%";
+  $("#cancelShareUpload").disabled = false;
+  $("#shareResultBlock").hidden = true;
+  sharePollTimer && clearInterval(sharePollTimer);
+  sharePollTimer = setInterval(pollShareUpload, 1000);
+  await pollShareUpload();
+}
+
+async function pollShareUpload() {
+  if (!shareJobId) return;
+  const job = await api(`/share/upload/${shareJobId}`);
+  $("#shareUploadProgress").dataset.state = job.status === "done" ? "done" : job.status === "failed" ? "failed" : "uploading";
+  $("#shareUploadStage").textContent = job.status === "done" ? "上传完成" : job.status === "failed" ? `上传失败：${job.error || ""}` : job.status === "cancelled" ? "已取消" : "上传中…";
+  $("#shareUploadPercent").textContent = `${job.progress}%`;
+  $("#shareUploadProgress").querySelector(".taskProgressTrack span").style.width = `${job.progress}%`;
+  renderShareFiles(job.files);
+  if (job.status === "done") {
+    sharePollTimer && clearInterval(sharePollTimer);
+    sharePollTimer = null;
+    $("#cancelShareUpload").disabled = true;
+    $("#shareResultBlock").hidden = false;
+    $("#shareResultCode").textContent = job.code;
+    const mb = (job.bytesTotal / 1048576).toFixed(0);
+    $("#shareResultInfo").textContent = `《${job.songKey}》 共 ${job.files.length} 个视频 · ${mb} MB 已上传`;
+  } else if (job.status === "failed" || job.status === "cancelled") {
+    sharePollTimer && clearInterval(sharePollTimer);
+    sharePollTimer = null;
+    $("#cancelShareUpload").disabled = true;
+  }
+}
+
+function renderShareFiles(files) {
+  const box = $("#shareUploadFiles");
+  box.innerHTML = files.map(f => {
+    const mark = f.done ? "✓" : "…";
+    return `<div class="shareFile"><span class="shareFileMark">${mark}</span><span>${f.name}</span><span class="muted">${(f.size / 1048576).toFixed(0)} MB</span></div>`;
+  }).join("");
+}
+
+async function saveShareCfg(silent) {
+  const body = {
+    server: $("#shareServer").value.trim(),
+    user: $("#shareUser").value.trim(),
+  };
+  const secret = $("#shareSecret").value.trim();
+  if (secret) body.secret = secret;
+  const r = await api("/share/config", { method: "POST", body: JSON.stringify(body) });
+  if (!silent) $("#shareCfgStatus").textContent = "已保存";
+  return r;
+}
+
+document.addEventListener("click", async event => {
+  const target = event.target;
+  if (target.id === "saveShareCfg") {
+    if ($("#shareSecret").value.trim()) $("#shareSecret").value = "";
+    void safely(() => saveShareCfg(false))();
+  }
+  if (target.id === "refreshShareSongs") void safely(refreshShareSongs)();
+  if (target.id === "copyShareCode") {
+    navigator.clipboard?.writeText($("#shareResultCode").textContent || "").then(() => {
+      $("#shareResultInfo").textContent = "分享码已复制到剪贴板";
+    });
+  }
+  if (target.id === "cancelShareUpload") {
+    if (shareJobId) await api(`/share/upload/${shareJobId}/cancel`, { method: "POST", body: "{}" });
+    sharePollTimer && clearInterval(sharePollTimer);
+    sharePollTimer = null;
+    $("#shareUploadProgress").dataset.state = "idle";
+    $("#shareUploadStage").textContent = "已取消";
+    $("#cancelShareUpload").disabled = true;
+  }
+  if (target.id === "downloadShare") {
+    const code = ($("#shareDownloadCode").value || "").trim().toUpperCase();
+    if (!code) { $("#shareDownloadStatus").textContent = "请输入分享码"; return; }
+    $("#shareDownloadStatus").textContent = "下载还原中…";
+    try {
+      const r = await api("/share/download", { method: "POST", body: JSON.stringify({ code }) });
+      $("#shareDownloadStatus").textContent = `还原完成：${r.fileCount} 个文件 → ${r.outDir}`;
+    } catch (error) {
+      $("#shareDownloadStatus").textContent = `下载失败：${error.message}`;
+    }
+  }
+});
 
 function showError(error) {
   void openNotice({ title: "操作失败", message: error.message });
