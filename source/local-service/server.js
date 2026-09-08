@@ -524,18 +524,22 @@ export async function createOliviaService(options = {}) {
     } catch { return {}; }
   };
   // 把下载还原的歌曲注册到游戏曲库（按 name_key upsert），让 ACG 列表能认出
+  // 必须写 video_url / video_by_tod_view：原生播放器靠 video_url 非空判断可播放，靠 tod view 切视角
   const writeSongMeta = (meta) => {
     try {
       const user = db.prepare("SELECT id FROM users ORDER BY id LIMIT 1").get();
       if (!user) return;
       const existing = db.prepare("SELECT id FROM playlist_items WHERE name_key = ?").get(meta.nameKey);
-      const cols = { name: meta.name, name_key: meta.nameKey, icon_url: meta.iconUrl, duration: Number(meta.duration) || 0, performance_type: meta.performanceType || "PlaySing" };
+      const duration = Number(meta.duration) || 0;
+      const videoDuration = Number(meta.videoDuration) || duration;
+      const videoUrl = String(meta.videoUrl ?? "");
+      const videoByTodView = typeof meta.videoByTodView === "string" ? meta.videoByTodView : "";
       if (existing) {
-        db.prepare("UPDATE playlist_items SET name = ?, icon_url = ?, duration = ?, performance_type = ? WHERE name_key = ?")
-          .run(cols.name, cols.icon_url, cols.duration, cols.performance_type, meta.nameKey);
+        db.prepare("UPDATE playlist_items SET name = ?, icon_url = ?, duration = ?, video_duration = ?, video_url = ?, performance_type = ?, video_by_tod_view = ? WHERE name_key = ?")
+          .run(meta.name, meta.iconUrl, duration, videoDuration, videoUrl || existing.video_url || "", meta.performanceType || "PlaySing", videoByTodView || existing.video_by_tod_view || "", meta.nameKey);
       } else {
-        db.prepare("INSERT INTO playlist_items(id, user_id, item_type, item_id, name, name_key, icon_url, song_id, performance_id, duration, video_duration, video_url, performance_type, video_by_tod_view, created_at) VALUES(?, ?, 2, ?, ?, ?, ?, ?, '', ?, 0, ?, ?, 0, ?)")
-          .run(randomUUID().slice(0, 36), user.id, meta.nameKey, meta.name, meta.nameKey, meta.iconUrl, meta.nameKey, cols.duration, meta.videoUrl || "", cols.performance_type, nowSeconds());
+        db.prepare("INSERT INTO playlist_items(id, user_id, item_type, item_id, name, name_key, icon_url, song_id, performance_id, duration, video_duration, video_url, performance_type, video_by_tod_view, created_at) VALUES(?, ?, 2, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)")
+          .run(randomUUID().slice(0, 36), user.id, meta.nameKey, meta.name, meta.nameKey, meta.iconUrl, meta.nameKey, duration, videoDuration, videoUrl, meta.performanceType || "PlaySing", videoByTodView, nowSeconds());
       }
     } catch (e) { console.error("[writeSongMeta] " + e.message); }
   };
@@ -1763,6 +1767,46 @@ export async function createOliviaService(options = {}) {
     res.end(await readFile(file));
   }
 
+  // 分享还原的曲目通过本服务播放：/share/media/<songKey>/<file>，支持 Range（原生播放器需要）
+  async function serveShareMedia(req, res, pathname) {
+    const rest = pathname.slice("/share/media/".length);
+    const parts = rest.split("/").map(part => decodeURIComponent(part));
+    if (parts.length !== 2) return res.writeHead(400).end();
+    const [songKey, fileName] = parts;
+    if (!/^[A-Za-z0-9_.-]+$/u.test(songKey) || !/^[A-Za-z0-9_.-]+$/u.test(fileName)) return res.writeHead(400).end();
+    const file = join(shareEngine.videoRoot, songKey, fileName);
+    const info = await stat(file).catch(() => null);
+    if (!info || !info.isFile()) return res.writeHead(404).end();
+    const types = { ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska" };
+    const type = types[extname(fileName).toLowerCase()] || "application/octet-stream";
+    const range = req.headers.range;
+    if (typeof range === "string") {
+      const match = /^bytes=(\d*)-(\d*)$/u.exec(range.trim());
+      if (!match) return res.writeHead(416, { "Content-Range": `bytes */${info.size}` }).end();
+      const start = match[1] ? Number(match[1]) : Math.max(0, info.size - Number(match[2] || 0));
+      const end = match[2] && match[1] ? Math.min(Number(match[2]), info.size - 1) : info.size - 1;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= info.size)
+        return res.writeHead(416, { "Content-Range": `bytes */${info.size}` }).end();
+      res.writeHead(206, {
+        "Content-Type": type,
+        "Content-Length": end - start + 1,
+        "Content-Range": `bytes ${start}-${end}/${info.size}`,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+      });
+      if (req.method === "HEAD") return res.end();
+      return pipeline(createReadStream(file, { start, end }), res).catch(() => res.destroy());
+    }
+    res.writeHead(200, {
+      "Content-Type": type,
+      "Content-Length": info.size,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "no-store",
+    });
+    if (req.method === "HEAD") return res.end();
+    return pipeline(createReadStream(file), res).catch(() => res.destroy());
+  }
+
   async function route(req, res) {
     const url = new URL(req.url, "http://127.0.0.1");
     const path = url.pathname;
@@ -1778,6 +1822,7 @@ export async function createOliviaService(options = {}) {
       res.writeHead(204, corsHeaders(req));
       return res.end();
     }
+    if (path.startsWith("/share/media/")) return serveShareMedia(req, res, path);
     if (path.startsWith("/share/") || path === "/share") {
       if (await shareEngine.route(req, res, path)) return;
     }
@@ -1948,6 +1993,16 @@ export async function createOliviaService(options = {}) {
         performanceType: row.performance_type || "",
         videoByTodView,
       };
+    }
+
+    // 离线曲库补录：把分享还原到本机的曲目也交给前端，合并进曲库列表（前端按 nameKey 去重）
+    if (req.method === "GET" && path === "/toy/localSongs") {
+      const user = getLocalUser();
+      const rows = db.prepare("SELECT * FROM playlist_items WHERE user_id = ? ORDER BY created_at DESC").all(user.id);
+      const list = rows
+        .filter(row => typeof row.video_url === "string" && row.video_url.includes("/share/media/"))
+        .map(row => ({ ...playlistItemPayload(row), styleType: "", styleTypeDisplayName: "", originalAuthor: "本地分享" }));
+      return ok(req, res, { list, total: list.length });
     }
 
     if (req.method === "GET" && path === "/toy/searchPlaylist") {

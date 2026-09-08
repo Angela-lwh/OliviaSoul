@@ -244,6 +244,14 @@ $libraryCoverCount = ([regex]::Matches($text, [regex]::Escape($libraryCoverFrom)
 if ($libraryCoverCount -ne 1) { throw "expected one offline catalog song normalizer, got $libraryCoverCount" }
 $text = $text.Replace($libraryCoverFrom, $libraryCoverTo)
 
+# 离线曲库补录：离线模式下左侧曲库 = 离线曲库 ∩ 本地已下载。分享还原的曲目不在官方离线曲库里，
+# 所以列表里永远看不到。这里在离线曲库加载完成后，从本地服务补一批本机还原的曲目（按 nameKey 去重）。
+$localSongsFrom = 'const d=await Xm(),h=y1(d==null?void 0:d.data);e.value=h.songs,t.value=h.musicStyles,s.value=h.performanceModes'
+$localSongsTo = $localSongsFrom + ';try{const __r=await fetch("http://127.0.0.1:27149/toy/localSongs");const __j=await __r.json();const __x=__j&&__j.data&&Array.isArray(__j.data.list)?__j.data.list:[];const __seen=new Set(e.value.map(__i=>String(__i.nameKey||__i.id)));const __st=h.musicStyles&&h.musicStyles[0]&&h.musicStyles[0].type||"";const __add=__x.filter(__i=>!__seen.has(String(__i.nameKey||__i.id))).map(__i=>{const __o=Qo(__i);if(!__o.styleType)__o.styleType=__st;if(!__o.originalAuthor)__o.originalAuthor="本地分享";return __o});if(__add.length)e.value=[...e.value,...__add]}catch(__e){}'
+$localSongsCount = ([regex]::Matches($text, [regex]::Escape($localSongsFrom))).Count
+if ($localSongsCount -ne 1) { throw "expected one offline catalog loader, got $localSongsCount" }
+$text = $text.Replace($localSongsFrom, $localSongsTo)
+
 $offlineUidFallbackFrom = 'const M=s.uid||b1;s.setUid(M)'
 $offlineUidFallbackTo = 'const M=!s.uid||String(s.uid)==="0"?"0":String(s.uid);s.setUid(M==="0"?"":M)'
 $offlineUidFallbackCount = ([regex]::Matches($text, [regex]::Escape($offlineUidFallbackFrom))).Count

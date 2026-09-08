@@ -410,10 +410,38 @@ export function createShareEngine({
         if (file) iconUrl = `${serviceBase()}/cover/${file}`;
       } catch {}
     }
+    // 原生播放器要求 video_url 非空才允许播放（否则列表里是灰的），并靠 video_by_tod_view 切换视角
+    const play = buildPlayMeta(beg.songKey, beg.files, iconUrl, duration);
     try {
-      await writeSongMeta?.({ nameKey: beg.songKey, name, duration, iconUrl, performanceType: dlMeta.performanceType || "PlaySing", videoUrl: "" });
+      await writeSongMeta?.({
+        nameKey: beg.songKey, name, duration, iconUrl,
+        performanceType: dlMeta.performanceType || "PlaySing",
+        videoUrl: play.videoUrl, videoDuration: duration, videoByTodView: play.videoByTodView,
+      });
     } catch (e) { console.error("[writeSongMeta]", e?.message ?? e); }
     return { code, songKey: beg.songKey, name, totalBytes: beg.totalBytes, outDir, fileCount: beg.files.length };
+  }
+
+  // 按本机已还原的文件生成播放元数据：主视频取 TOD1730/NI，其余视角塞进 video_by_tod_view
+  function buildPlayMeta(songKey, files, coverUrl, duration) {
+    const base = serviceBase();
+    const dir = `/share/media/${encodeURIComponent(songKey)}`;
+    const views = [];
+    for (const f of files) {
+      const m = /_TOD(\d+)_(NI|WI)_L\.[A-Za-z0-9]+$/u.exec(String(f.name ?? ""));
+      if (!m) continue;
+      const raw = m[1];
+      const tod = raw === "1200" ? "TOD12" : raw === "1730" ? "TOD1730" : raw === "2000" ? "TOD20" : `TOD${raw}`;
+      views.push({
+        url: `${base}${dir}/${encodeURIComponent(f.name)}`,
+        tod, view: m[2],
+        cover_url: coverUrl || "",
+        duration: Number(duration) || 0,
+        size: Number(f.size) || 0,
+      });
+    }
+    const main = views.find(v => v.tod === "TOD1730" && v.view === "NI") || views[0] || null;
+    return { videoUrl: main ? main.url : "", videoByTodView: views.length ? JSON.stringify(views) : "" };
   }
 
   // 下载任务（后台执行 + 进度轮询）
@@ -578,5 +606,5 @@ export function createShareEngine({
     return false;
   }
 
-  return { route, loadCfg, saveCfg, listSongs, startUpload, getJob, cancelJob, downloadToCache, info, quota, loadRecords, saveRecords };
+  return { route, loadCfg, saveCfg, listSongs, startUpload, getJob, cancelJob, downloadToCache, info, quota, loadRecords, saveRecords, videoRoot: VIDEO_ROOT, buildPlayMeta };
 }
