@@ -253,8 +253,8 @@ export function createShareEngine({
     return { songKey: key, name, movedTo, trashRoot };
   }
 
-  // 本机是否已有这首曲子（按 songKey 目录 + 至少一个视频文件判断）
-  async function localSongInfo(songKey) {
+  // 本机是否已有这首曲子：目录 + 视频文件；给了远端哈希就逐个比对，避免「同名不同内容」被误判
+  async function localSongInfo(songKey, remoteFiles) {
     const key = String(songKey ?? "").trim();
     if (!key) return null;
     const folder = path.join(VIDEO_ROOT, key);
@@ -265,7 +265,16 @@ export function createShareEngine({
     let meta = {};
     try { meta = (await readSongMeta?.()) ?? {}; } catch {}
     const m = meta[key] || {};
-    return { songKey: key, name: m.name || prettyNameKey(key), fileCount: names.length, folder };
+    const base = { songKey: key, name: m.name || prettyNameKey(key), fileCount: names.length, folder };
+    const expected = Array.isArray(remoteFiles) ? remoteFiles.filter(f => f && f.name && f.sha256) : [];
+    if (!expected.length) return { ...base, sameContent: null };
+    let same = expected.length === names.length;
+    for (const f of expected) {
+      if (!names.includes(f.name)) { same = false; break; }
+      const hash = await fileSha256(path.join(folder, f.name)).catch(() => "");
+      if (hash !== String(f.sha256).toLowerCase()) { same = false; break; }
+    }
+    return { ...base, sameContent: same };
   }
 
   // ---------- 上传任务 ----------
@@ -428,6 +437,7 @@ export function createShareEngine({
     const downloadOne = async (f) => {
       const target = path.join(outDir, f.name);
       const tmp = target + ".part";
+      const expect = String(f.sha256 ?? "").toLowerCase();
       const got0 = (await fs.stat(tmp).catch(() => null))?.size ?? 0;
       doneBytes += got0;
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -448,13 +458,31 @@ export function createShareEngine({
         }
         const now = (await fs.stat(tmp).catch(() => null))?.size ?? 0;
         if (now > before) doneBytes += (now - before);
+        // 完整性校验：大小对了还要哈希对得上，坏了删掉重下
+        if (expect) {
+          const actual = await fileSha256(tmp).catch(() => "");
+          if (actual !== expect) {
+            await fs.rm(tmp, { force: true }).catch(() => {});
+            doneBytes -= (now - before);
+            if (attempt === 3) throw new Error(`文件校验失败（哈希不一致）：${f.name}`);
+            await new Promise(r => setTimeout(r, 1000));
+            continue;
+          }
+        }
         await fs.rename(tmp, target);
         onProgress?.(Math.min(100, Math.round(doneBytes / Math.max(1, total) * 100)), f.name);
         return;
       }
       // 若循环因"已完成"退出，也要推进进度
       const now = (await fs.stat(tmp).catch(() => null))?.size ?? 0;
-      if (now >= f.size) { try { await fs.rename(tmp, target); } catch {} onProgress?.(Math.min(100, Math.round(doneBytes / Math.max(1, total) * 100)), f.name); }
+      if (now >= f.size) {
+        if (expect) {
+          const actual = await fileSha256(tmp).catch(() => "");
+          if (actual !== expect) { await fs.rm(tmp, { force: true }).catch(() => {}); throw new Error(`文件校验失败（哈希不一致）：${f.name}`); }
+        }
+        try { await fs.rename(tmp, target); } catch {}
+        onProgress?.(Math.min(100, Math.round(doneBytes / Math.max(1, total) * 100)), f.name);
+      }
     };
 
     // 并发下载（4 个同时），互不阻塞
@@ -482,7 +510,10 @@ export function createShareEngine({
         videoUrl: play.videoUrl, videoDuration: duration, videoByTodView: play.videoByTodView,
       });
     } catch (e) { console.error("[writeSongMeta]", e?.message ?? e); }
-    return { code, songKey: beg.songKey, name, totalBytes: beg.totalBytes, outDir, fileCount: beg.files.length };
+    return {
+      code, songKey: beg.songKey, name, totalBytes: beg.totalBytes, outDir, fileCount: beg.files.length,
+      expiresAt: Number(beg.expiresAt) || 0, expiresInDays: Number.isFinite(Number(beg.expiresInDays)) ? Number(beg.expiresInDays) : -1,
+    };
   }
 
   // 按本机已还原的文件生成播放元数据：主视频取 TOD1730/NI，其余视角塞进 video_by_tod_view
@@ -509,8 +540,8 @@ export function createShareEngine({
 
   // 下载任务（后台执行 + 进度轮询）
   const dlJobs = new Map();
-  function startDownloadJob(cfg, code, jobId) {
-    const job = { id: jobId, code, status: "downloading", progress: 0, message: "开始下载…", error: null, result: null };
+  function startDownloadJob(cfg, code, jobId, extra) {
+    const job = { id: jobId, code, status: "downloading", progress: 0, message: "开始下载…", error: null, result: null, replacedName: extra?.replacedName ?? "" };
     dlJobs.set(jobId, job);
     downloadToCache(cfg, code, (pct, name) => {
       job.progress = pct; job.message = `下载中 ${name || ""}`;
@@ -523,7 +554,7 @@ export function createShareEngine({
   }
   // 注意：不要叫 jobView —— 上传任务同名函数会互相覆盖（函数声明提升）
   function dlJobView(j) {
-    return { id: j.id, code: j.code, status: j.status, progress: j.progress, message: j.message, error: j.error, result: j.result };
+    return { id: j.id, code: j.code, status: j.status, progress: j.progress, message: j.message, error: j.error, result: j.result, replacedName: j.replacedName || "" };
   }
   function getDlJob(id) { const j = dlJobs.get(id); return j ? dlJobView(j) : null; }
 
@@ -588,9 +619,18 @@ export function createShareEngine({
     const recordDel = /^\/share\/records\/([0-9a-zA-Z-]+)$/u.exec(pathname);
     if (req.method === "DELETE" && recordDel) {
       const records = await loadRecords();
+      const target = records.find(r => r.id === recordDel[1] || r.code === recordDel[1]);
+      let remote = null;
+      if (target?.code) {
+        // 顺带删掉服务器上的分享（引用计数归零时 OSS 对象也会被清掉）
+        try {
+          const cfg = await loadCfg();
+          if (cfg.server) remote = await httpJson("POST", `${cfg.server}/api/share/${target.code}/delete`, headers(cfg), {});
+        } catch (e) { remote = { error: String(e?.message ?? e) }; }
+      }
       const next = records.filter(r => r.id !== recordDel[1] && r.code !== recordDel[1]);
       await saveRecords(next);
-      return ok(res, { deleted: next.length !== records.length });
+      return ok(res, { deleted: next.length !== records.length, code: target?.code ?? "", remote });
     }
 
     if (pathname === "/share/upload") {
@@ -624,20 +664,22 @@ export function createShareEngine({
         if (!cfg.server) return json(res, 400, { code: 1, message: "未配置服务器", data: null });
         const code = String(b.code ?? "").toUpperCase();
         if (!CODE_RE.test(code)) return json(res, 400, { code: 1, message: "分享码格式不对（8 位大写）", data: null });
-        // 获取前先查本机曲库：已存在同名曲目就直接提示，不再重复下载
+        // 获取前先查本机曲库：同名且内容一致才跳过；同名但内容不同继续下载覆盖
         let remote;
         try { remote = await info(cfg, code); }
         catch (e) { return json(res, 400, { code: 1, message: `分享码查询失败：${e.message}`, data: null }); }
-        const existed = await localSongInfo(remote?.songKey);
-        if (existed) {
+        const local = await localSongInfo(remote?.songKey, remote?.files);
+        if (local && local.sameContent !== false) {
           return ok(res, {
-            exists: true, code, songKey: existed.songKey, name: existed.name,
-            fileCount: existed.fileCount, folder: existed.folder,
-            message: `本机曲库已存在《${existed.name}》，无需重复获取`,
+            exists: true, code, songKey: local.songKey, name: local.name,
+            fileCount: local.fileCount, folder: local.folder,
+            expiresAt: remote?.expiresAt ?? 0, expiresInDays: remote?.expiresInDays ?? -1,
+            message: `本机曲库已存在《${local.name}》，无需重复获取`,
           });
         }
         const jobId = randomUUID();
-        const j = startDownloadJob(cfg, code, jobId);
+        // 同名但内容不同：标记出来，成功后提示「已覆盖本机同名曲目」
+        const j = startDownloadJob(cfg, code, jobId, { replacedName: local && local.sameContent === false ? local.name : "" });
         return ok(res, j);
       }
     }

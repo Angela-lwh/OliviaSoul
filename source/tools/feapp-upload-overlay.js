@@ -156,6 +156,13 @@
     function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
     function fmtSize(n) { n = Number(n || 0); return n >= 1073741824 ? (n / 1073741824).toFixed(2) + " GB" : (n / 1048576).toFixed(1) + " MB"; }
     function fmtDur(sec) { const n = Number(sec || 0); if (!n) return "-:--"; const m = Math.floor(n / 60); const s = Math.floor(n % 60); return m + ":" + String(s).padStart(2, "0"); }
+    function fmtTime(ts) {
+      const n = Number(ts || 0);
+      if (!n) return "-";
+      const d = new Date(n);
+      const p = (v) => String(v).padStart(2, "0");
+      return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
     function prettyName(songKey) { return String(songKey || "").replace(/^PlaySing_/u, "").replace(/_Ziyun_original$/u, ""); }
 
     function shell(inner, subtitle) {
@@ -256,6 +263,7 @@
             '<button data-os-action' + btnAttr + ' style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:transparent;border:0;border-radius:8px;color:#c9c4bc;cursor:pointer;white-space:nowrap;" title="' + esc(label) + '">' +
               iconSvg + '<span style="color:#c9c4bc;font-size:12px;letter-spacing:1px;">' + esc(label) + '</span>' +
             '</button>' +
+            (d.extraActions || "") +
           '</div>' +
         '</div>';
       }
@@ -342,10 +350,14 @@
     function showCode(h, job) {
       var code = job.code || "";
       var allReused = job.files && job.files.length > 0 && job.reused >= job.files.length;
-      var doneText = allReused ? "服务器已有相同内容，秒传完成" : "上传成功";
+      var doneText = allReused ? "服务器已有相同内容，未占用新空间" : "上传成功";
+      var reusedHint = allReused
+        ? '<div style="font-size:12px;color:#7fa08b;margin-bottom:10px;">已直接复用服务器上的同一份文件（秒传）</div>'
+        : "";
       fillContent(h, shell(
         '<div style="text-align:center;padding:6px 0 18px;">' +
-          '<div style="font-size:13px;color:#9a9aa2;margin-bottom:14px;">《' + esc(pendingJobName || prettyName(job.songKey)) + '》' + doneText + '</div>' +
+          '<div style="font-size:13px;color:#9a9aa2;margin-bottom:6px;">《' + esc(pendingJobName || prettyName(job.songKey)) + '》' + doneText + '</div>' +
+          reusedHint +
           '<div style="font-size:12px;color:#8a8a93;margin-bottom:8px;">分享码</div>' +
           '<div data-os-code style="font-size:34px;letter-spacing:7px;font-family:ui-monospace,monospace;color:#e2bc67;font-variant-numeric:tabular-nums;">' + esc(code) + '</div>' +
           '<div style="margin-top:22px;display:flex;justify-content:center;gap:10px;">' +
@@ -363,19 +375,21 @@
     }
 
     // 复制分享码：同步 fallback 先落地（CEF 里 clipboard 异步接口可能不回调），保证提示一定会弹
+    // 同时查一次分享信息，把剩余有效期一起提示出来
     function copyShare(code, btn) {
-      var shown = false;
-      function done() {
-        if (shown) return;
-        shown = true;
-        showToast("分享码已复制：" + code, "success");
-      }
-      try { fallbackCopy(code); done(); } catch (e) {}
+      try { fallbackCopy(code); } catch (e) {}
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(code).then(done, function () {});
-        }
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).catch(function () {});
       } catch (e) {}
+      var shown = false;
+      function tell(tail) { if (shown) return; shown = true; showToast("分享码已复制：" + code + (tail || ""), "success"); }
+      var timer = setTimeout(function () { tell(""); }, 800);
+      fetch(SERVICE + "/share/info?code=" + encodeURIComponent(code), { method: "GET" }).then(function (r) { return r.json(); }).then(function (env) {
+        clearTimeout(timer);
+        var d = env && env.data;
+        var days = d ? Number(d.expiresInDays) : NaN;
+        tell(isFinite(days) && days >= 0 ? "（剩余有效期 " + days + " 天）" : "");
+      }).catch(function () { clearTimeout(timer); tell(""); });
     }
     // 游戏风格 toast（顶部居中，深色卡片，自动消失）
     var _toastHost = null;
@@ -395,7 +409,11 @@
         el.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="' + iconColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"></circle><path d="m8 12 2.5 2.5L16 9"></path></svg>' +
           '<span style="flex:1;color:#e6e3de;">' + esc(msg) + '</span>';
         _toastHost.appendChild(el);
-        requestAnimationFrame(function () { el.style.opacity = "1"; el.style.transform = "translateY(0)"; });
+        // 不要用 requestAnimationFrame 做淡入：游戏窗口失焦/被遮挡时 rAF 会被节流，
+        // toast 会永远停在 opacity:0（DOM 存在但看不见）。强制重排后直接置为可见。
+        void el.offsetWidth;
+        el.style.opacity = "1";
+        el.style.transform = "translateY(0)";
         setTimeout(function () {
           el.style.opacity = "0"; el.style.transform = "translateY(-8px)";
           setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 260);
@@ -459,6 +477,55 @@
       if (closeBtn) closeBtn.onclick = hasCancel
         ? function () { closeResultDialog(); fire(opts.onCancel); }
         : function () { closeResultDialog(); fire(opts.onClose); };
+    }
+
+    // ---------- 曲库页搜索框（按曲名过滤列表） ----------
+    var _songFilter = "";
+    function markListRows() {
+      var lists = document.querySelectorAll("#tour-song-list");
+      for (var i = 0; i < lists.length; i++) {
+        var titles = lists[i].querySelectorAll("h3");
+        for (var j = 0; j < titles.length; j++) {
+          var row = titles[j].closest(".group") || titles[j].parentElement;
+          if (row && row.className && row.className.indexOf("os-lib-row") === -1) row.className += " os-lib-row";
+        }
+      }
+    }
+    function applySongFilter() {
+      var q = (_songFilter || "").trim().toLowerCase();
+      var rows = document.querySelectorAll(".os-lib-row");
+      for (var i = 0; i < rows.length; i++) {
+        var title = rows[i].querySelector("h3");
+        var name = title ? (title.textContent || "") : (rows[i].textContent || "");
+        rows[i].style.display = (!q || name.toLowerCase().indexOf(q) !== -1) ? "" : "none";
+      }
+    }
+    function injectSongSearch() {
+      var lists = document.querySelectorAll("#tour-song-list");
+      for (var i = 0; i < lists.length; i++) {
+        var list = lists[i];
+        if (list.querySelector("[data-os-search]")) continue;
+        var wrap = document.createElement("div");
+        wrap.setAttribute("data-os-search", "");
+        wrap.style.cssText = "position:sticky;top:0;z-index:5;padding-bottom:8px;background:#17181c;";
+        wrap.innerHTML =
+          '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#1c1d22;border:1px solid #30313a;border-radius:10px;">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8a8a93" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>' +
+            '<input data-os-search-input placeholder="搜索曲目" style="flex:1;min-width:0;background:transparent;border:0;color:#e6e3de;font-size:13px;outline:none;">' +
+            '<button data-os-search-clear style="display:none;background:none;border:0;color:#8a8a93;font-size:16px;line-height:1;cursor:pointer;">×</button>' +
+          '</div>';
+        list.insertBefore(wrap, list.firstChild);
+        (function (input, clear) {
+          input.addEventListener("input", function () {
+            _songFilter = input.value || "";
+            clear.style.display = _songFilter ? "block" : "none";
+            applySongFilter();
+          });
+          clear.addEventListener("click", function () {
+            input.value = ""; _songFilter = ""; clear.style.display = "none"; applySongFilter(); input.focus();
+          });
+        })(wrap.querySelector("[data-os-search-input]"), wrap.querySelector("[data-os-search-clear]"));
+      }
     }
 
     // ---------- ACG 曲库行：隐藏「试听」「分享」，在「加播单」右侧补一个「删除」 ----------
@@ -533,6 +600,31 @@
       });
     }
 
+    // ---------- 删除「我的上传」里的分享（连带删服务器分享与 OSS 对象） ----------
+    function confirmDeleteShare(recId, name) {
+      showResultDialog({
+        title: "删除分享",
+        type: "warning",
+        message: "确定要删除《" + name + "》的分享吗？\n会同时删掉本机的上传记录和服务器上的分享码；该内容如果没有其它分享引用，OSS 文件也会被释放。",
+        okText: "删除",
+        cancelText: "取消",
+        danger: true,
+        onConfirm: function () { doDeleteShare(recId, name); },
+      });
+    }
+    function doDeleteShare(recId, name) {
+      fetch(SERVICE + "/share/records/" + encodeURIComponent(recId), { method: "DELETE" })
+        .then(function (r) { return r.json(); })
+        .then(function (env) {
+          if (env.code !== 0) throw new Error(env.message || "删除失败");
+          showToast("已删除分享：《" + name + "》", "success");
+          renderMyUploads();
+        })
+        .catch(function (e) {
+          showResultDialog({ type: "error", title: "删除失败", message: e.message || "删除失败", okText: "确定" });
+        });
+    }
+
     // 还原完成后让曲库列表重新拉取：hash 路由先跳走再跳回，触发视图重新挂载
     function refreshSongList() {
       try {
@@ -546,7 +638,16 @@
     }
 
     // ---------- 我的上传记录（渲染到上传空态区） ----------
+    // 注意：渲染会写 DOM，而 DOM 变化又触发 MutationObserver；必须防抖 + 内容不变就不写，
+    // 否则会形成「重渲染 ↔ observer」死循环，按钮会在按下与抬起之间被替换，点击直接失效。
+    var _myUploadTimer = null;
+    var _myUploadSig = "";
     function renderMyUploads() {
+      if (_myUploadTimer) clearTimeout(_myUploadTimer);
+      _myUploadTimer = setTimeout(renderMyUploadsNow, 200);
+    }
+    function renderMyUploadsNow() {
+      _myUploadTimer = null;
       // 找到「我的上传」空态区（含 暂无上传 / 开始上传你的演奏吧～）
       var marker = null;
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
@@ -568,9 +669,17 @@
 
       fetch(SERVICE + "/share/records", { method: "GET" }).then(function (r) { return r.json(); }).then(function (env) {
         var records = (env.data && env.data.records) || [];
-        if (!records.length) return;
-        // 用游戏官方表头（不隐藏、不注入自己的表头）
+        var sig = JSON.stringify(records);
         var existingNode = emptyState.querySelector("[data-os-myupload]") || (emptyState.parentElement && emptyState.parentElement.querySelector("[data-os-myupload]"));
+        if (sig === _myUploadSig && (records.length === 0 || existingNode)) return; // 内容没变，不动 DOM
+        _myUploadSig = sig;
+        if (!records.length) {
+          // 记录删光了：把注入的列表移除，恢复「暂无上传」空态
+          if (existingNode && existingNode.parentNode) existingNode.parentNode.removeChild(existingNode);
+          emptyState.style.display = "";
+          return;
+        }
+        // 用游戏官方表头（不隐藏、不注入自己的表头）
         // 隐藏空状态块（暂无上传 + 开始上传你的演奏吧 + 上传按钮）
         emptyState.style.display = "none";
         var host = emptyState.parentElement || emptyState;
@@ -586,15 +695,21 @@
             duration: r.duration || 0,
             mode: r.mode || "整曲",
             iconUrl: r.iconUrl || "",
-            subtitle: "HOYO-MIX · " + fmtDur(r.duration) + " · " + fmtSize(r.totalBytes),
+            subtitle: fmtSize(r.totalBytes) + " · " + fmtTime(r.uploadedAt),
             btnLabel: "复制",
             btnIcon: "copy",
             renderCopy: true,
             btnAttr: 'data-os-copy-code="' + esc(r.code) + '"',
+            extraActions:
+              '<button data-os-del-share="' + esc(r.id) + '" data-os-del-share-name="' + esc(r.name) + '"' +
+              ' style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:transparent;border:0;border-radius:8px;color:#c9c4bc;cursor:pointer;white-space:nowrap;" title="删除分享">' +
+                '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9c4bc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12"></path><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>' +
+                '<span style="color:#c9c4bc;font-size:12px;letter-spacing:1px;">删除</span>' +
+              '</button>',
           });
         }).join("");
         if (!existingNode) host.insertBefore(node, host.firstChild);
-        // 「复制」按钮的点击由文档级捕获统一处理（避免列表重渲染把 onclick 冲掉）
+        // 「复制」「删除」按钮的点击由文档级捕获统一处理（避免列表重渲染把 onclick 冲掉）
       }).catch(function () {});
     }
 
@@ -622,6 +737,8 @@
             '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8a8a93" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M11 5 6 9H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h3l5 4z"></path></svg>' +
             '<input data-os-code-input maxlength="8" placeholder="分享码" style="flex:1;min-width:0;background:transparent;border:0;color:#e6e3de;font-size:18px;letter-spacing:3px;text-transform:uppercase;outline:none;font-family:monospace;">' +
           '</div>' +
+          // 曲目信息（大小 / 文件数 / 预计耗时）
+          '<div data-os-get-info style="margin-top:10px;font-size:12px;color:#9a9aa2;min-height:16px;"></div>' +
           // 按钮：清空 + 获取（带音符图标，实心）
           '<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">' +
             '<button data-os-clear style="padding:9px 18px;border:1px solid #3a3b42;border-radius:9px;background:transparent;color:#9a9aa2;cursor:pointer;">清空</button>' +
@@ -644,9 +761,35 @@
         if (!/^[A-Z2-9]{8}$/u.test(code)) { setGetStatus(h, "分享码格式不对（8 位大写字母数字）", "#e09a9a"); return; }
         doGet(h, code);
       }
+      // 输入满 8 位就预查一次：显示曲名 / 大小 / 文件数 / 预计耗时
+      var infoTimer = null;
+      if (input) input.addEventListener("input", function () {
+        if (infoTimer) clearTimeout(infoTimer);
+        var code = (input.value || "").trim().toUpperCase();
+        var box = h.querySelector("[data-os-get-info]");
+        if (!/^[A-Z2-9]{8}$/u.test(code)) { if (box) box.textContent = ""; return; }
+        if (box) box.textContent = "正在查询曲目信息…";
+        infoTimer = setTimeout(function () {
+          fetch(SERVICE + "/share/info?code=" + encodeURIComponent(code), { method: "GET" }).then(function (r) { return r.json(); }).then(function (env) {
+            var d = env && env.data;
+            var box2 = h.querySelector("[data-os-get-info]");
+            if (!box2) return;
+            if (!d) { box2.textContent = "分享码不存在或已过期"; return; }
+            var eta = Math.max(1, Math.round(Number(d.totalBytes || 0) / (40 * 1024 * 1024)));
+            box2.textContent = "《" + (d.songName || prettyName(d.songKey)) + "》 · " + fmtSize(d.totalBytes) + " · " + d.fileCount + " 个文件 · 预计约 " + eta + " 秒" +
+              (Number(d.expiresInDays) >= 0 ? " · 分享码剩余 " + Number(d.expiresInDays) + " 天" : "");
+          }).catch(function () { var box2 = h.querySelector("[data-os-get-info]"); if (box2) box2.textContent = ""; });
+        }, 350);
+      });
       if (input) input.addEventListener("keydown", function (e) { if (e.key === "Enter") run(); });
       if (getBtn) getBtn.onclick = run;
-      if (clearBtn) clearBtn.onclick = function () { if (input) input.value = ""; setGetStatus(h, "输入对方分享码后点「获取」", "#9a9aa2"); if (input) input.focus(); };
+      if (clearBtn) clearBtn.onclick = function () {
+        if (input) input.value = "";
+        var box = h.querySelector("[data-os-get-info]");
+        if (box) box.textContent = "";
+        setGetStatus(h, "输入对方分享码后点「获取」", "#9a9aa2");
+        if (input) input.focus();
+      };
     }
     function setGetStatus(h, msg, color) {
       var s = h.querySelector("[data-os-get-status]");
@@ -683,10 +826,14 @@
               if (job.status === "done") {
                 if (bar) bar.style.width = "100%";
                 var gotName = (job.result && job.result.name) || prettyName(job.result ? job.result.songKey : code);
+                var tail = "";
+                if (job.replacedName) tail += "\n（已覆盖本机同名曲目《" + job.replacedName + "》）";
+                var leftDays = job.result ? Number(job.result.expiresInDays) : NaN;
+                if (isFinite(leftDays) && leftDays >= 0) tail += "\n分享码剩余有效期 " + leftDays + " 天（到期无人下载会自动删除）";
                 closeModal();
                 showResultDialog({
                   title: "获取成功",
-                  message: "《" + gotName + "》已还原到本机曲库，曲库列表已刷新。",
+                  message: "《" + gotName + "》已还原到本机曲库，曲库列表已刷新。" + tail,
                   okText: "确定",
                 });
                 refreshSongList();
@@ -740,6 +887,9 @@
       hideLegacyMidiPanel();
       injectGetButton();
       decorateSongRows();
+      injectSongSearch();
+      markListRows();
+      applySongFilter();
     }
     function start() {
       try { boot(); } catch (e) {}
@@ -753,6 +903,7 @@
         try { injectGetButton(); } catch (e) {}
         try { applyQuotaText(); } catch (e) {}
         try { decorateSongRows(); } catch (e) {}
+        try { injectSongSearch(); markListRows(); applySongFilter(); } catch (e) {}
       });
       mo.observe(document.body, { childList: true, subtree: true, characterData: true });
     }
@@ -764,6 +915,14 @@
 
     // 文档级捕获：先于 Vue 的元素级处理器拦截（曲库上传入口 / 我的上传「复制」）
     document.addEventListener("click", function (e) {
+      var delShare = e.target && e.target.closest ? e.target.closest("[data-os-del-share]") : null;
+      if (delShare) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        confirmDeleteShare(delShare.getAttribute("data-os-del-share"), delShare.getAttribute("data-os-del-share-name") || "这首曲目");
+        return;
+      }
       var delBtn = e.target && e.target.closest ? e.target.closest("[data-os-del]") : null;
       if (delBtn) {
         e.preventDefault();

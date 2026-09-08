@@ -99,6 +99,13 @@ export function createOssClient({ accessKeyId, accessKeySecret, bucket, endpoint
     return out;
   }
   async function listObjects(prefix) { return (await listObjectsDetailed(prefix)).map(o => o.key); }
+  // ---- 生命周期规则（清理未完成的分片上传等） ----
+  const putBucketLifecycle = (xml) => api("PUT", "", { sub: { lifecycle: true }, contentType: "application/xml", body: xml });
+  async function getBucketLifecycle() {
+    try { const r = await api("GET", "", { sub: { lifecycle: true } }); return r.text; }
+    catch (e) { if (/-> 404/u.test(String(e?.message ?? ""))) return ""; throw e; }
+  }
+
   // 服务端拷贝对象（用于把临时 session 对象移动到正式 shares/<code>/ 路径）
   async function copyObject(srcKey, destKey) {
     const date = new Date().toUTCString();
@@ -122,6 +129,7 @@ export function createOssClient({ accessKeyId, accessKeySecret, bucket, endpoint
     bucket, endpoint, base,
     initMultipart, presignPutPart, completeMultipart, abortMultipart, listParts,
     presignGet, putObject, getObjectText, deleteObject, headObject, copyObject, listObjects, listObjectsDetailed,
+    putBucketLifecycle, getBucketLifecycle,
     api,
   };
 }
