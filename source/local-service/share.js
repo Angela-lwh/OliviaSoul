@@ -207,6 +207,32 @@ export function createShareEngine({
     return { root, songs };
   }
 
+  // ---------- 内容哈希（去重 / 秒传）：按 文件名|大小|修改时间 缓存，避免重复哈希大文件 ----------
+  const hashCacheFile = path.join(appData, "share-hashes.json");
+  let hashCache = null;
+  async function loadHashCache() {
+    if (hashCache) return hashCache;
+    try { hashCache = JSON.parse(await fs.readFile(hashCacheFile, "utf8")); } catch { hashCache = {}; }
+    if (!hashCache || typeof hashCache !== "object") hashCache = {};
+    return hashCache;
+  }
+  async function fileSha256(file) {
+    const st = await fs.stat(file);
+    const cacheKey = `${path.basename(file)}|${st.size}|${Math.round(st.mtimeMs)}`;
+    const cache = await loadHashCache();
+    if (typeof cache[cacheKey] === "string" && /^[0-9a-f]{64}$/u.test(cache[cacheKey])) return cache[cacheKey];
+    const hash = await new Promise((resolve, reject) => {
+      const digest = createHash("sha256");
+      const stream = createReadStream(file);
+      stream.on("error", reject);
+      stream.on("data", chunk => digest.update(chunk));
+      stream.on("end", () => resolve(digest.digest("hex")));
+    });
+    cache[cacheKey] = hash;
+    try { await fs.writeFile(hashCacheFile, JSON.stringify(cache)); } catch {}
+    return hash;
+  }
+
   // 本机是否已有这首曲子（按 songKey 目录 + 至少一个视频文件判断）
   async function localSongInfo(songKey) {
     const key = String(songKey ?? "").trim();
@@ -227,7 +253,7 @@ export function createShareEngine({
   function jobView(j) {
     return {
       id: j.id, status: j.status, songKey: j.songKey, error: j.error || null, code: j.code || null,
-      progress: j.progress, bytesDone: j.bytesDone, bytesTotal: j.bytesTotal,
+      progress: j.progress, bytesDone: j.bytesDone, bytesTotal: j.bytesTotal, stage: j.stage || "", reused: j.reused || 0,
       files: j.files.map(f => ({ name: f.name, size: f.size, done: f.done })),
     };
   }
@@ -266,9 +292,16 @@ export function createShareEngine({
 
   async function runUpload(job, cfg, folder) {
     const H = headers(cfg);
+    // 先算内容哈希：服务端据此判断该文件是否已经在 OSS 上（同一首歌只存一份，可直接秒传）
+    job.stage = "hashing";
+    for (const f of job.files) {
+      if (f.sha256) continue;
+      try { f.sha256 = await fileSha256(path.join(folder, f.name)); } catch { f.sha256 = ""; }
+    }
+    job.stage = "uploading";
     const begin = (await httpJson("POST", `${cfg.server}/api/upload/begin`, H, {
       songKey: job.songKey, songName: job.songName ?? "", duration: Number(job.duration) || 0,
-      files: job.files.map(f => ({ name: f.name, size: f.size })),
+      files: job.files.map(f => ({ name: f.name, size: f.size, sha256: f.sha256 || "" })),
     })).data;
     // OSS 模式：begin 返回 sessionId + 每个文件的分片预签名 URL，客户端直传 OSS
     job.sessionId = begin.sessionId;
@@ -281,6 +314,16 @@ export function createShareEngine({
       const localPath = path.join(folder, bf.name);
       const localFile = job.files.find(f => f.name === bf.name);
       const parts = [];
+      if (bf.reused) {
+        // 服务器上已有同样内容：不传字节，直接计入进度
+        completedBytes += Number(bf.size) || 0;
+        if (localFile) localFile.done = true;
+        job.reused = (job.reused || 0) + 1;
+        job.bytesDone = completedBytes;
+        job.progress = job.bytesTotal ? Math.min(100, Math.round(completedBytes / job.bytesTotal * 100)) : 0;
+        finishFiles.push({ name: bf.name, parts: [] });
+        continue;
+      }
       const partSize = Number(bf.partSize) || (8 * 1024 * 1024);
       for (const part of bf.parts) {
         const start = (part.partNumber - 1) * partSize;
@@ -456,12 +499,13 @@ export function createShareEngine({
     }).catch(e => {
       job.status = "failed"; job.error = String(e?.message ?? e); job.message = "下载失败";
     });
-    return jobView(job);
+    return dlJobView(job);
   }
-  function jobView(j) {
+  // 注意：不要叫 jobView —— 上传任务同名函数会互相覆盖（函数声明提升）
+  function dlJobView(j) {
     return { id: j.id, code: j.code, status: j.status, progress: j.progress, message: j.message, error: j.error, result: j.result };
   }
-  function getDlJob(id) { const j = dlJobs.get(id); return j ? jobView(j) : null; }
+  function getDlJob(id) { const j = dlJobs.get(id); return j ? dlJobView(j) : null; }
 
   async function info(cfg, code) {
     const r = (await httpJson("GET", `${cfg.server}/api/share/${code}/info`, {}, null)).data;

@@ -322,7 +322,7 @@
         var files = h.querySelector("[data-os-files]");
         if (bar) bar.style.width = (job.progress || 0) + "%";
         if (pct) pct.textContent = (job.progress || 0) + "%";
-        if (stage) stage.textContent = job.status === "done" ? "上传完成" : job.status === "failed" ? "上传失败：" + (job.error || "") : job.status === "cancelled" ? "已取消" : "上传中…";
+        if (stage) stage.textContent = job.status === "done" ? "上传完成" : job.status === "failed" ? "上传失败：" + (job.error || "") : job.status === "cancelled" ? "已取消" : job.stage === "hashing" ? "校验文件（服务器去重检查）…" : "上传中…";
         if (files) files.innerHTML = (job.files || []).map(function (f) {
           return '<div style="display:flex;gap:8px;font-size:11px;color:#b9bac1;"><span style="color:' + (f.done ? "#7fa08b" : "#8a8a93") + ';">' + (f.done ? "✓" : "…") + '</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(f.name) + '</span><span style="flex-shrink:0;">' + fmtSize(f.size) + '</span></div>';
         }).join("");
@@ -337,9 +337,11 @@
     }
     function showCode(h, job) {
       var code = job.code || "";
+      var allReused = job.files && job.files.length > 0 && job.reused >= job.files.length;
+      var doneText = allReused ? "服务器已有相同内容，秒传完成" : "上传成功";
       fillContent(h, shell(
         '<div style="text-align:center;padding:6px 0 18px;">' +
-          '<div style="font-size:13px;color:#9a9aa2;margin-bottom:14px;">《' + esc(pendingJobName || prettyName(job.songKey)) + '》上传成功</div>' +
+          '<div style="font-size:13px;color:#9a9aa2;margin-bottom:14px;">《' + esc(pendingJobName || prettyName(job.songKey)) + '》' + doneText + '</div>' +
           '<div style="font-size:12px;color:#8a8a93;margin-bottom:8px;">分享码</div>' +
           '<div data-os-code style="font-size:34px;letter-spacing:7px;font-family:ui-monospace,monospace;color:#e2bc67;font-variant-numeric:tabular-nums;">' + esc(code) + '</div>' +
           '<div style="margin-top:22px;display:flex;justify-content:center;gap:10px;">' +
