@@ -201,22 +201,24 @@
       var iconSvg = icon === "copy"
         ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9c4bc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>'
         : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9c4bc" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13"></path><path d="M6 9l6-6 6 6"></path><path d="M4 21h16a1 1 0 0 0 1-1v-2"></path></svg>';
-      var coverHtml = '<div style="width:48px;height:48px;flex-shrink:0;position:relative;border-radius:10px;overflow:hidden;background:#22232a;">' +
+      var coverHtml = '<div style="width:48px;height:48px;flex-shrink:0;position:relative;border-radius:12px;overflow:hidden;background:#22232a;">' +
         (d.iconUrl ? '<img src="' + esc(d.iconUrl) + '" style="width:100%;height:100%;object-fit:cover;display:block;" onerror="this.style.display=\'none\'">' : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#5a5b63;font-size:16px;">♪</div>') +
       '</div>';
-      var titleHtml = '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;">' +
-        '<span style="font-size:18px;line-height:22px;font-weight:500;color:#e6e3de;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(d.name) + '</span>' +
-        '<span style="font-size:14px;line-height:20px;color:#9a9aa2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(d.subtitle) + '</span>' +
+      // 字体完全对齐官方 SongLiteItem 行：曲目名 = text-title-l 未定义 -> 继承 16px / line-height 1.6 / 400；
+      // 副标题 = text-body-s -> 12px / 20px / 400；两行紧邻（官方 h3+p 无间距）
+      var titleHtml = '<div style="flex:1;min-width:0;display:flex;flex-direction:column;">' +
+        '<span style="font-size:16px;line-height:1.6;color:#e6e3de;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(d.name) + '</span>' +
+        '<span style="font-size:12px;line-height:20px;color:#9a9aa2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(d.subtitle) + '</span>' +
       '</div>';
 
       if (d.renderCopy === true) {
-        // 我的上传：序号列 50px 固定居中；剩余按 曲目:模式:复制 = 6:2.5:2（模式用比例调到居中，不用 margin/padding）；字体仿官方
+        // 我的上传：序号列 50px 固定居中；剩余按 曲目:模式:复制 = 6:2.4:2（模式用比例调到居中，不用 margin/padding）；字体对齐官方 token
         return '<div class="os-acg-row" style="position:relative;display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #232429;cursor:default;min-height:64px;">' +
-          '<div style="width:50px;flex-shrink:0;color:#8a8a93;font-size:14px;line-height:18px;font-weight:500;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:center;align-self:stretch;">' + (index + 1) + '</div>' +
+          '<div style="width:50px;flex-shrink:0;color:#8a8a93;font-size:14px;line-height:18px;font-weight:600;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:center;align-self:stretch;">' + (index + 1) + '</div>' +
           // 曲目（含封面）
           '<div class="os-title-cell" style="flex:6 6 0;min-width:0;display:flex;align-items:center;gap:10px;justify-content:flex-start;">' + coverHtml + titleHtml + '</div>' +
           // 模式（比例 2.4，弹唱居中偏右对齐表头）
-          '<div class="os-mode-cell" style="flex:2.4 2.4 0;min-width:0;color:#9a9aa2;font-size:14px;line-height:18px;font-weight:500;display:flex;align-items:center;justify-content:flex-start;">' + esc(d.mode) + '</div>' +
+          '<div class="os-mode-cell" style="flex:2.4 2.4 0;min-width:0;color:#9a9aa2;font-size:14px;line-height:18px;font-weight:600;display:flex;align-items:center;justify-content:flex-start;">' + esc(d.mode) + '</div>' +
           // 复制
           '<div style="flex:2 2 0;min-width:0;display:flex;align-items:center;justify-content:flex-start;">' +
             '<button data-os-action' + btnAttr + ' style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:transparent;border:0;border-radius:8px;color:#c9c4bc;cursor:pointer;white-space:nowrap;" title="' + esc(label) + '">' +
