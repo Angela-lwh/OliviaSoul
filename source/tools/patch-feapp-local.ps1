@@ -307,7 +307,8 @@ if ($menuBarCount -ne 1) { throw "expected one offline music menu bar hide, got 
 $text = $text.Replace($menuBarFrom, $menuBarTo)
 
 $ugcListFrom = 'Ce=j(()=>w.value?oe.getSongsByStyle(R.value).filter(q=>f.isDownloaded(q.id)):Q.value?te.value:N.value)'
-$ugcListTo = 'Ce=j(()=>Q.value?te.value:w.value?oe.getSongsByStyle(R.value).filter(q=>f.isDownloaded(q.id)):N.value)'
+# 后半段额外放行「本机还原」的曲目：它们不在原生下载名单里，isDownloaded() 会是 false
+$ugcListTo = 'Ce=j(()=>Q.value?te.value:w.value?oe.getSongsByStyle(R.value).filter(q=>f.isDownloaded(q.id)||typeof q.videoUrl==="string"&&q.videoUrl.indexOf("/share/media/")>=0):N.value)'
 $ugcListCount = ([regex]::Matches($text, [regex]::Escape($ugcListFrom))).Count
 if ($ugcListCount -ne 1) { throw "expected one offline ugc tab song-list skip, got $ugcListCount" }
 $text = $text.Replace($ugcListFrom, $ugcListTo)
