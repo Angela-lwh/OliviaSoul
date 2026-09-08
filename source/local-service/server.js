@@ -545,7 +545,10 @@ export async function createOliviaService(options = {}) {
   };
   // 分享还原时要给游戏写绝对 URL（封面等），端口在 listen 时才确定
   let serviceBase = "http://127.0.0.1:27149";
-  const shareEngine = createShareEngine({ appData, dataDir, readSongMeta, writeSongMeta, serviceBase: () => serviceBase });
+  const deleteSongMeta = (nameKey) => {
+    db.prepare("DELETE FROM playlist_items WHERE name_key = ?").run(String(nameKey));
+  };
+  const shareEngine = createShareEngine({ appData, dataDir, readSongMeta, writeSongMeta, serviceBase: () => serviceBase, deleteSongMeta });
   db.prepare("UPDATE letters SET status = ?, error = ? WHERE status = ?")
     .run(STATUS.FAILED, "回信生成报错", STATUS.LLM_PROCESSING);
   const failedLetters = db.prepare("SELECT id, reply_video FROM letters WHERE status = ?").all(STATUS.FAILED);

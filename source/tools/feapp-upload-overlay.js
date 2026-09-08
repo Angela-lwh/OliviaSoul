@@ -47,7 +47,11 @@
       ".os-act-btn{opacity:0;pointer-events:none;transition:opacity .15s}" +
       ".os-acg-row:hover .os-act-btn{opacity:1;pointer-events:auto}" +
       ".os-idx-num{transition:opacity .15s}" +
-      ".os-acg-row:hover .os-idx-num{opacity:0}";
+      ".os-acg-row:hover .os-idx-num{opacity:0}" +
+      // 曲库行的操作区：保证我们补的「删除」和原生按钮在悬停时可点（原生在未下载状态会整体禁用）
+      ".os-row-actions{pointer-events:auto !important}" +
+      ".os-row-actions-hidden{opacity:0}" +
+      ".os-lib-row:hover .os-row-actions-hidden{opacity:1 !important}";
 
     // ---------- 文本改写（幂等） ----------
     function rewriteNode(node) {
@@ -417,9 +421,16 @@
     function showResultDialog(opts) {
       opts = opts || {};
       closeResultDialog();
-      var icon = opts.type === "error"
+      var isError = opts.type === "error";
+      var icon = isError
         ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e09a9a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>'
-        : '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"></circle><path d="m8 12 3 3 5-6"></path></svg>';
+        : opts.type === "warning"
+          ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e2bc67" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>'
+          : '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"></circle><path d="m8 12 3 3 5-6"></path></svg>';
+      var hasCancel = typeof opts.cancelText === "string" && opts.cancelText !== "";
+      var okStyle = opts.danger
+        ? "padding:9px 22px;border:0;border-radius:8px;background:#c86b5e;color:#fff;font-size:14px;font-weight:600;cursor:pointer;"
+        : "padding:9px 22px;border:0;border-radius:8px;background:#d8cfc4;color:#232227;font-size:14px;font-weight:600;cursor:pointer;";
       var host = document.createElement("div");
       host.id = "os-upload-dialog";
       host.style.cssText = "position:fixed;inset:0;z-index:2147483002;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);font-family:'Segoe UI','Microsoft YaHei UI',sans-serif;";
@@ -430,22 +441,96 @@
             '<button data-os-dlg-close style="background:none;border:0;color:#8a8a93;font-size:20px;line-height:1;cursor:pointer;flex-shrink:0;">×</button>' +
           '</div>' +
           '<div style="display:flex;align-items:flex-start;gap:12px;padding:4px 22px 18px;font-size:14px;line-height:22px;color:#c9c4bc;">' +
-            icon + '<div style="flex:1;min-width:0;">' + esc(opts.message || "") + '</div>' +
+            icon + '<div style="flex:1;min-width:0;white-space:pre-line;">' + esc(opts.message || "") + '</div>' +
           '</div>' +
-          '<div style="display:flex;justify-content:flex-end;padding:12px 22px 16px;border-top:1px solid #2a2b32;">' +
-            '<button data-os-dlg-ok style="padding:9px 22px;border:0;border-radius:8px;background:#d8cfc4;color:#232227;font-size:14px;font-weight:600;cursor:pointer;">' + esc(opts.okText || "确定") + '</button>' +
+          '<div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 22px 16px;border-top:1px solid #2a2b32;">' +
+            (hasCancel ? '<button data-os-dlg-cancel style="padding:9px 20px;border:1px solid #4b4c53;border-radius:8px;background:transparent;color:#c9c4bc;font-size:14px;cursor:pointer;">' + esc(opts.cancelText) + '</button>' : '') +
+            '<button data-os-dlg-ok style="' + okStyle + '">' + esc(opts.okText || "确定") + '</button>' +
           '</div>' +
         '</div>';
       document.body.appendChild(host);
       _dlgHost = host;
-      function done() {
-        closeResultDialog();
-        if (typeof opts.onClose === "function") { try { opts.onClose(); } catch (e) {} }
-      }
+      function fire(fn) { if (typeof fn === "function") { try { fn(); } catch (e) {} } }
       var okBtn = host.querySelector("[data-os-dlg-ok]");
       var closeBtn = host.querySelector("[data-os-dlg-close]");
-      if (okBtn) okBtn.onclick = done;
-      if (closeBtn) closeBtn.onclick = done;
+      var cancelBtn = host.querySelector("[data-os-dlg-cancel]");
+      if (okBtn) okBtn.onclick = function () { closeResultDialog(); fire(opts.onConfirm || opts.onClose); };
+      if (cancelBtn) cancelBtn.onclick = function () { closeResultDialog(); fire(opts.onCancel); };
+      if (closeBtn) closeBtn.onclick = hasCancel
+        ? function () { closeResultDialog(); fire(opts.onCancel); }
+        : function () { closeResultDialog(); fire(opts.onClose); };
+    }
+
+    // ---------- ACG 曲库行：隐藏「试听」「分享」，在「加播单」右侧补一个「删除」 ----------
+    var TRASH_ICON = '<svg class="text-title-m m-1 text-info group-hover/action:text-primary-2 group-active/action:text-primary-3" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12"></path><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>';
+    function rowNameKey(row) {
+      var img = row.querySelector('img[src*="/cover/"]');
+      if (!img) return "";
+      var m = /\/cover\/([^/?#"']+)/u.exec(img.getAttribute("src") || "");
+      if (!m) return "";
+      return decodeURIComponent(m[1]).replace(/\.[A-Za-z0-9]+$/u, "");
+    }
+    function decorateSongRows() {
+      var buttons = document.querySelectorAll('[class*="group/action"]');
+      for (var i = 0; i < buttons.length; i++) {
+        var addBtn = buttons[i];
+        if (addBtn.getAttribute("data-os-del") !== null) continue;
+        if ((addBtn.textContent || "").trim() !== "加播单") continue;
+        var row = addBtn.closest(".group");
+        if (!row) continue;
+        // 同一行里的「试听」「分享」隐藏
+        var siblings = row.querySelectorAll('[class*="group/action"]');
+        for (var j = 0; j < siblings.length; j++) {
+          var text = (siblings[j].textContent || "").trim();
+          if (text === "试听" || text === "分享") siblings[j].style.display = "none";
+        }
+        if (row.querySelector("[data-os-del]")) continue;
+        var key = rowNameKey(row);
+        if (!key) continue;
+        var actions = addBtn.parentNode;
+        if (!actions) continue;
+        if (actions.className.indexOf("os-row-actions") === -1) actions.className += " os-row-actions";
+        if (actions.className.indexOf("pointer-events-none") !== -1) actions.className += " os-row-actions-hidden";
+        if (row.className.indexOf("os-lib-row") === -1) row.className += " os-lib-row";
+        var del = document.createElement("div");
+        del.setAttribute("data-os-del", key);
+        del.className = "bg-[transparent] p-[1px] rounded-1 group/action cursor-pointer";
+        del.title = "删除本机曲目";
+        del.innerHTML = '<div class="flex items-center flex-col">' + TRASH_ICON +
+          '<div class="text-label-s text-text-secondary group-hover/action:text-primary-2 group-active/action:text-primary-3">删除</div></div>';
+        actions.insertBefore(del, addBtn.nextSibling);
+      }
+    }
+    function confirmDeleteLocal(songKey, row) {
+      var name = "";
+      try { var title = row ? row.querySelector("h3") : null; name = title ? (title.textContent || "").trim() : ""; } catch (e) {}
+      if (!name) name = prettyName(songKey);
+      showResultDialog({
+        title: "删除本机曲目",
+        type: "warning",
+        message: "确定要从本机删除《" + name + "》吗？\n文件会被移到本机回收目录（可手动恢复），游戏曲库里的条目也会一起删除。",
+        okText: "删除",
+        cancelText: "取消",
+        danger: true,
+        onConfirm: function () { doDeleteLocal(songKey, name); },
+      });
+    }
+    function doDeleteLocal(songKey, name) {
+      fetch(SERVICE + "/share/delete-local", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ songKey: songKey }),
+      }).then(function (r) { return r.json(); }).then(function (env) {
+        if (env.code !== 0) throw new Error(env.message || "删除失败");
+        var data = env.data || {};
+        showResultDialog({
+          title: "已删除",
+          message: "《" + (data.name || name) + "》已从本机曲库移除。\n文件位置：" + (data.movedTo || ""),
+          okText: "确定",
+          onClose: function () { try { location.reload(); } catch (e) {} },
+        });
+      }).catch(function (e) {
+        showResultDialog({ type: "error", title: "删除失败", message: e.message || "删除失败", okText: "确定" });
+      });
     }
 
     // 还原完成后让曲库列表重新拉取：hash 路由先跳走再跳回，触发视图重新挂载
@@ -654,6 +739,7 @@
       renderMyUploads();
       hideLegacyMidiPanel();
       injectGetButton();
+      decorateSongRows();
     }
     function start() {
       try { boot(); } catch (e) {}
@@ -666,6 +752,7 @@
         try { hideLegacyMidiPanel(); } catch (e) {}
         try { injectGetButton(); } catch (e) {}
         try { applyQuotaText(); } catch (e) {}
+        try { decorateSongRows(); } catch (e) {}
       });
       mo.observe(document.body, { childList: true, subtree: true, characterData: true });
     }
@@ -677,6 +764,14 @@
 
     // 文档级捕获：先于 Vue 的元素级处理器拦截（曲库上传入口 / 我的上传「复制」）
     document.addEventListener("click", function (e) {
+      var delBtn = e.target && e.target.closest ? e.target.closest("[data-os-del]") : null;
+      if (delBtn) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        confirmDeleteLocal(delBtn.getAttribute("data-os-del"), delBtn.closest(".group"));
+        return;
+      }
       var copyBtn = e.target && e.target.closest ? e.target.closest("[data-os-copy-code]") : null;
       if (copyBtn) {
         e.preventDefault();

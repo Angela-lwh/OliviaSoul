@@ -139,7 +139,7 @@ function httpPutOss(u, filePath, start, length, onBytes) {
 
 export function createShareEngine({
   appData, dataDir, videoRoot: videoRootOption, readSongMeta: readSongMetaOption, writeSongMeta: writeSongMetaOption,
-  serviceBase: serviceBaseOption, findCover: findCoverOption,
+  serviceBase: serviceBaseOption, findCover: findCoverOption, deleteSongMeta: deleteSongMetaOption,
 }) {
   const cfgFile = path.join(appData, "share.json");
   const recordsFile = path.join(appData, "share-records.json");
@@ -148,6 +148,7 @@ export function createShareEngine({
   const writeSongMeta = writeSongMetaOption ?? null;
   const serviceBase = typeof serviceBaseOption === "function" ? serviceBaseOption : () => "http://127.0.0.1:27149";
   const findCover = typeof findCoverOption === "function" ? findCoverOption : null;
+  const deleteSongMeta = typeof deleteSongMetaOption === "function" ? deleteSongMetaOption : null;
 
   async function loadRecords() {
     try { return JSON.parse(await fs.readFile(recordsFile, "utf8")); }
@@ -231,6 +232,25 @@ export function createShareEngine({
     cache[cacheKey] = hash;
     try { await fs.writeFile(hashCacheFile, JSON.stringify(cache)); } catch {}
     return hash;
+  }
+
+  // 删除本机曲目：目录移到回收站（可恢复），并删掉游戏曲库里的那一行
+  async function deleteLocalSong(songKey) {
+    const key = String(songKey ?? "").trim();
+    if (!/^PlaySing_[A-Za-z0-9_.-]+$/u.test(key)) throw new Error("songKey 不合法");
+    const folder = path.join(VIDEO_ROOT, key);
+    const st = await fs.stat(folder).catch(() => null);
+    if (!st || !st.isDirectory()) throw new Error("本机没有这首曲目");
+    let meta = {};
+    try { meta = (await readSongMeta?.()) ?? {}; } catch {}
+    const name = meta[key]?.name || prettyNameKey(key);
+    const trashRoot = path.join(appData, "deleted-songs");
+    await fs.mkdir(trashRoot, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
+    const movedTo = path.join(trashRoot, `${key}-${stamp}`);
+    await fs.rename(folder, movedTo);
+    try { await deleteSongMeta?.(key); } catch (e) { console.error("[deleteSongMeta]", e?.message ?? e); }
+    return { songKey: key, name, movedTo, trashRoot };
   }
 
   // 本机是否已有这首曲子（按 songKey 目录 + 至少一个视频文件判断）
@@ -629,6 +649,14 @@ export function createShareEngine({
       return ok(res, j);
     }
 
+    if (pathname === "/share/delete-local") {
+      if (req.method === "POST") {
+        const b = await readJson(req);
+        try { return ok(res, await deleteLocalSong(b.songKey)); }
+        catch (e) { return json(res, 400, { code: 1, message: e.message || "删除失败", data: null }); }
+      }
+    }
+
     if (pathname === "/share/quota") {
       if (req.method === "GET") {
         const c = await loadCfg();
@@ -650,5 +678,5 @@ export function createShareEngine({
     return false;
   }
 
-  return { route, loadCfg, saveCfg, listSongs, startUpload, getJob, cancelJob, downloadToCache, info, quota, loadRecords, saveRecords, videoRoot: VIDEO_ROOT, buildPlayMeta };
+  return { route, loadCfg, saveCfg, listSongs, startUpload, getJob, cancelJob, downloadToCache, info, quota, loadRecords, saveRecords, videoRoot: VIDEO_ROOT, buildPlayMeta, deleteLocalSong };
 }
