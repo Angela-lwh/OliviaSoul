@@ -198,7 +198,7 @@ if (-not $ffmpegRoot) { throw "FFmpeg 下载包结构不正确" }
 Copy-PublicFile (Join-Path $ffmpegRoot.FullName "bin\ffmpeg.exe") (Join-Path $stage "runtime\ffmpeg\bin\ffmpeg.exe")
 Copy-PublicFile (Join-Path $ffmpegRoot.FullName "LICENSE.txt") (Join-Path $stage "runtime\ffmpeg\LICENSE.txt")
 
-foreach ($name in @("server.js", "transcription.js", "remote-memory.js", "soul-bundle.js")) {
+foreach ($name in @("server.js", "share.js", "transcription.js", "remote-memory.js", "soul-bundle.js")) {
     Copy-PublicFile (Join-Path $project $name) (Join-Path $stage "app\$name")
 }
 Copy-PublicFile (Join-Path $project "package.json") (Join-Path $stage "app\package.json")
@@ -233,7 +233,8 @@ if ([string]::IsNullOrWhiteSpace($Iscc)) {
         (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) })
     if ($candidates.Count -lt 1) { throw "缺少 Inno Setup 6。安装后重新运行 npm run build:win。" }
-    $Iscc = $candidates[0]
+    # 注意：$candidates 只有一个元素时是字符串，直接 [0] 会取到首字符 "C"，必须包一层 @()
+    $Iscc = @($candidates)[0]
 }
 
 $env:OLIVIA_SOUL_VERSION = $version

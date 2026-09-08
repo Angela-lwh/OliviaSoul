@@ -1761,6 +1761,32 @@ export async function createOliviaService(options = {}) {
     sendJson(req, res, { code: 0, message: "success", data }, 200, headers);
   }
 
+  // 曲库封面：/cover/<名字>，先找随包内置的封面（public/covers），再找外部封面目录
+  // 外部目录可用环境变量 OLIVIA_COVER_ROOT 指定（默认指向游戏安装目录，放 PlaySing_*.jpg 的地方）
+  const COVER_EXTS = [".jpg", ".jpeg", ".png", ".webp"];
+  function coverDirs() {
+    const dirs = [join(publicRoot, "covers")];
+    const external = String(process.env.OLIVIA_COVER_ROOT ?? "").trim();
+    if (external) dirs.push(external);
+    return dirs;
+  }
+  async function serveCover(req, res, pathname) {
+    const name = pathname === "/cover" || pathname === "/cover/" ? "" : decodeURIComponent(pathname.slice("/cover/".length));
+    if (!name || !/^[A-Za-z0-9_.-]+$/u.test(name)) return res.writeHead(404).end();
+    const stem = name.replace(/\.[A-Za-z0-9]+$/u, "");
+    const types = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp" };
+    for (const dir of coverDirs()) {
+      for (const ext of COVER_EXTS) {
+        try {
+          const data = await readFile(join(dir, stem + ext));
+          res.writeHead(200, { "Content-Type": types[ext], "Cache-Control": "public, max-age=86400" });
+          return res.end(data);
+        } catch {}
+      }
+    }
+    return res.writeHead(404).end();
+  }
+
   async function serveStatic(req, res, pathname) {
     const relative = pathname === "/admin" || pathname === "/admin/" ? "index.html" : pathname.slice("/admin/".length);
     if (!["index.html", "app.js", "styles.css", "olivia-soul-gold.png"].includes(relative)) throw httpError(404, "文件不存在");
@@ -2534,6 +2560,7 @@ export async function createOliviaService(options = {}) {
       });
     }
 
+    if (path === "/cover" || path.startsWith("/cover/")) return serveCover(req, res, path);
     if (path === "/admin" || path.startsWith("/admin/")) return serveStatic(req, res, path);
     throw httpError(404, "接口不存在");
   }

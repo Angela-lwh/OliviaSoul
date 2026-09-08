@@ -1,6 +1,8 @@
 **/node_modules/
 **/dist/
 **/dist-native/
+**/dist-repack/
+**/build/
 **/bin/
 **/obj/
 **/data/
