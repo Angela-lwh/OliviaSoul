@@ -450,9 +450,11 @@
     function refreshSongList() {
       try {
         var cur = location.hash || "";
-        if (cur.indexOf("#/studio") !== 0) return; // 不在曲库页不用刷，进去时本来就会重新拉取
+        // 不在曲库页就不用刷（进去时本来就会重新拉取）
+        if (cur && cur.indexOf("#/studio") !== 0) return;
+        var back = cur || "#/studio";
         location.hash = "#/history";
-        setTimeout(function () { location.hash = cur; }, 200);
+        setTimeout(function () { location.hash = back; }, 200);
       } catch (e) {}
     }
 
