@@ -488,11 +488,17 @@
       var btn = h.querySelector("[data-os-get]");
       if (barWrap) barWrap.style.display = "block";
       if (btn) btn.disabled = true;
-      setGetStatus(h, "正在从云端获取…（0%）");
+      setGetStatus(h, "正在校验本机曲库…");
       try {
         var r = await fetch(SERVICE + "/share/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: code }) });
         var b = await r.json();
         if (b.code !== 0) throw new Error(b.message);
+        // 本机已有同名曲目：直接提示，不重复下载
+        if (b.data && b.data.exists) {
+          if (bar) bar.style.width = "0%";
+          setGetStatus(h, b.data.message || ("本机曲库已存在《" + (b.data.name || "") + "》，无需重复获取"), "#e2bc67");
+          return;
+        }
         var jobId = b.data.id;
         // 轮询任务进度（每 1.5s）
         for (var tries = 0; tries < 2400; tries++) {

@@ -77,8 +77,8 @@ export function createOssClient({ accessKeyId, accessKeySecret, bucket, endpoint
   const deleteObject = (key) => api("DELETE", key);
   const headObject = (key) => api("HEAD", key).then(r => ({ size: Number(r.headers.get("content-length") || 0), etag: r.headers.get("etag") }));
   // 列出指定前缀下的对象（注意：prefix/max-keys/marker 是普通查询参数，不计入签名）
-  async function listObjects(prefix) {
-    const keys = []; let marker = "";
+  async function listObjectsDetailed(prefix) {
+    const out = []; let marker = "";
     for (let i = 0; i < 50; i++) {
       const date = new Date().toUTCString();
       const stringToSign = `GET\n\n\n${date}\n/${bucket}/`;
@@ -87,12 +87,18 @@ export function createOssClient({ accessKeyId, accessKeySecret, bucket, endpoint
       const res = await fetch(`${base}/?${qs.toString()}`, { headers: { Date: date, Authorization: `OSS ${accessKeyId}:${sign(stringToSign)}` } });
       const text = await res.text().catch(() => "");
       if (!res.ok) throw new Error(`OSS ListObjects -> ${res.status}: ${text.slice(0, 200)}`);
-      for (const m of text.matchAll(/<Key>([^<]+)<\/Key>/gu)) keys.push(m[1]);
+      for (const m of text.matchAll(/<Contents>([\s\S]*?)<\/Contents>/gu)) {
+        const key = /<Key>([^<]*)<\/Key>/u.exec(m[1])?.[1] ?? "";
+        const size = Number(/<Size>(\d+)<\/Size>/u.exec(m[1])?.[1] ?? 0);
+        const lastModified = /<LastModified>([^<]*)<\/LastModified>/u.exec(m[1])?.[1] ?? "";
+        if (key) out.push({ key, size, lastModified });
+      }
       if (!/<IsTruncated>true<\/IsTruncated>/u.test(text)) break;
-      marker = keys[keys.length - 1] || "";
+      marker = out[out.length - 1]?.key || "";
     }
-    return keys;
+    return out;
   }
+  async function listObjects(prefix) { return (await listObjectsDetailed(prefix)).map(o => o.key); }
   // 服务端拷贝对象（用于把临时 session 对象移动到正式 shares/<code>/ 路径）
   async function copyObject(srcKey, destKey) {
     const date = new Date().toUTCString();
@@ -115,7 +121,7 @@ export function createOssClient({ accessKeyId, accessKeySecret, bucket, endpoint
   return {
     bucket, endpoint, base,
     initMultipart, presignPutPart, completeMultipart, abortMultipart, listParts,
-    presignGet, putObject, getObjectText, deleteObject, headObject, copyObject, listObjects,
+    presignGet, putObject, getObjectText, deleteObject, headObject, copyObject, listObjects, listObjectsDetailed,
     api,
   };
 }

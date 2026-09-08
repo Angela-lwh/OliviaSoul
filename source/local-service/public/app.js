@@ -955,10 +955,23 @@ document.addEventListener("click", async event => {
   if (target.id === "downloadShare") {
     const code = ($("#shareDownloadCode").value || "").trim().toUpperCase();
     if (!code) { $("#shareDownloadStatus").textContent = "请输入分享码"; return; }
-    $("#shareDownloadStatus").textContent = "下载还原中…";
+    $("#shareDownloadStatus").textContent = "正在校验本机曲库…";
     try {
-      const r = await api("/share/download", { method: "POST", body: JSON.stringify({ code }) });
-      $("#shareDownloadStatus").textContent = `还原完成：${r.fileCount} 个文件 → ${r.outDir}`;
+      const job = await api("/share/download", { method: "POST", body: JSON.stringify({ code }) });
+      // 本机已有同名曲目：只提示，不下载
+      if (job.exists) {
+        $("#shareDownloadStatus").textContent = job.message || `本机曲库已存在《${job.name}》，无需重复获取`;
+        return;
+      }
+      $("#shareDownloadStatus").textContent = "下载还原中…";
+      for (let i = 0; i < 2400; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        const s = await api(`/share/download/${job.id}`);
+        $("#shareDownloadStatus").textContent = s.status === "done"
+          ? `还原完成：${s.result?.fileCount ?? 0} 个文件 → ${s.result?.outDir ?? ""}`
+          : s.status === "failed" ? `下载失败：${s.error || ""}` : `下载还原中… ${s.progress ?? 0}%`;
+        if (s.status === "done" || s.status === "failed") break;
+      }
     } catch (error) {
       $("#shareDownloadStatus").textContent = `下载失败：${error.message}`;
     }

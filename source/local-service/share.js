@@ -202,6 +202,21 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
     return { root, songs };
   }
 
+  // 本机是否已有这首曲子（按 songKey 目录 + 至少一个视频文件判断）
+  async function localSongInfo(songKey) {
+    const key = String(songKey ?? "").trim();
+    if (!key) return null;
+    const folder = path.join(VIDEO_ROOT, key);
+    const st = await fs.stat(folder).catch(() => null);
+    if (!st || !st.isDirectory()) return null;
+    const names = (await fs.readdir(folder).catch(() => [])).filter(n => /\.(mp4|webm|mov|mkv)$/iu.test(n));
+    if (!names.length) return null;
+    let meta = {};
+    try { meta = (await readSongMeta?.()) ?? {}; } catch {}
+    const m = meta[key] || {};
+    return { songKey: key, name: m.name || prettyNameKey(key), fileCount: names.length, folder };
+  }
+
   // ---------- 上传任务 ----------
   const jobs = new Map();
   function jobView(j) {
@@ -488,8 +503,22 @@ export function createShareEngine({ appData, dataDir, videoRoot: videoRootOption
         const b = await readJson(req);
         const cfg = await loadCfg();
         if (!cfg.server) return json(res, 400, { code: 1, message: "未配置服务器", data: null });
+        const code = String(b.code ?? "").toUpperCase();
+        if (!CODE_RE.test(code)) return json(res, 400, { code: 1, message: "分享码格式不对（8 位大写）", data: null });
+        // 获取前先查本机曲库：已存在同名曲目就直接提示，不再重复下载
+        let remote;
+        try { remote = await info(cfg, code); }
+        catch (e) { return json(res, 400, { code: 1, message: `分享码查询失败：${e.message}`, data: null }); }
+        const existed = await localSongInfo(remote?.songKey);
+        if (existed) {
+          return ok(res, {
+            exists: true, code, songKey: existed.songKey, name: existed.name,
+            fileCount: existed.fileCount, folder: existed.folder,
+            message: `本机曲库已存在《${existed.name}》，无需重复获取`,
+          });
+        }
         const jobId = randomUUID();
-        const j = startDownloadJob(cfg, String(b.code ?? "").toUpperCase(), jobId);
+        const j = startDownloadJob(cfg, code, jobId);
         return ok(res, j);
       }
     }
